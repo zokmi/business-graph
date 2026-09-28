@@ -2,55 +2,30 @@
 
 `business-graph-mcp` 是 stdio MCP server，由 MCP client 在需要時啟動，不需另設常駐服務。
 
-## 1. 安裝
+## 1. Claude Code 一條指令安裝
 
-### 方式 A：`uv tool install`（推薦）
+先確認已安裝 Claude Code 與 [uv](https://docs.astral.sh/uv/)（含 `uvx`），且 Git 可讀取此私有 GitHub 倉庫。執行：
+
+```powershell
+claude mcp add business-graph --scope user -- uvx --from git+https://github.com/zokmi/business-graph.git business-graph-mcp
+```
+
+- `claude mcp add` 註冊 server；Claude Code 第一次啟動它時，`uvx` 會下載並建立套件環境，之後使用本機快取。
+- `--scope user` 讓所有專案都能使用。若團隊確實要共享設定，再選 project scope。
+- 未指定版本時，`uvx` 會確認 Git 倉庫的 HEAD；快取可減少後續啟動時間，但啟動仍可能受網路或 GitHub 權限影響。
+
+重開 Claude Code 後以 `/mcp` 或 `claude mcp get business-graph` 確認連線。實測首次下載約 23 秒、快取後約 4 秒；首次啟動若逾時，可再試一次，或改用下列固定安裝方式。
+
+## 2. 固定安裝於本機（選用）
+
+若要避免每次啟動時檢查 Git 倉庫，可明示安裝套件，再讓 Claude Code 執行固定的本機檔案：
 
 ```powershell
 uv tool install --from "git+https://github.com/zokmi/business-graph.git" business-graph-mcp
-```
-
-完成後 `business-graph-mcp` 會出現在 PATH；Windows 通常位於 `%USERPROFILE%\.local\bin\business-graph-mcp.exe`。更新使用：
-
-```powershell
-uv tool upgrade business-graph-mcp
-```
-
-建立對應的 Git tag 後，若要鎖定發行版本：
-
-```powershell
-uv tool install --from "git+https://github.com/zokmi/business-graph.git@business-graph-mcp-v0.1.0" business-graph-mcp
-```
-
-> 請勿把 `uvx --from "git+https://..."` 設為 MCP server 啟動命令。那會讓每個 session 都連 GitHub 解析與可能重建，容易超過 MCP client 的啟動 timeout。明示安裝與升級可讓啟動快且版本可控。
-
-### 方式 B：`pipx`
-
-```powershell
-pipx install "git+https://github.com/zokmi/business-graph.git"
-```
-
-更新用 `pipx upgrade business-graph-mcp`；若所用 pipx 版本無法直接升級 Git 來源，使用 `pipx reinstall business-graph-mcp`。
-
-## 2. 在 Claude Code 註冊
-
-```powershell
 claude mcp add business-graph --scope user -- business-graph-mcp
 ```
 
-- Server key 是 `business-graph`，執行檔與套件名都是 `business-graph-mcp`。
-- 若執行檔不在 Claude Code 的 PATH，請改用絕對路徑。
-- `--scope user` 讓所有專案都能使用；若團隊確實要共享專案設定，再選 project scope。
-
-重開 Claude Code 後以 `/mcp` 確認 `business-graph` 顯示為 connected。
-
-可先直接做啟動 smoke test：
-
-```powershell
-"" | business-graph-mcp
-```
-
-stderr 出現 `business-graph MCP server 啟動` 表示環境檢查通過。這是 stdio server，沒有輸入時會等待；空輸入讓它完成啟動後正常結束。
+若已註冊同名 server，先用 `claude mcp remove business-graph --scope user` 移除舊設定，再新增。本機執行檔若不在 Claude Code 的 PATH，請在 `claude mcp add` 中改用絕對路徑；Windows 通常位於 `%USERPROFILE%\.local\bin\business-graph-mcp.exe`。固定安裝的版本可用 `uv tool upgrade business-graph-mcp` 更新。
 
 ## 3. 其他 MCP client
 
@@ -60,8 +35,8 @@ stderr 出現 `business-graph MCP server 啟動` 表示環境檢查通過。這�
 {
   "mcpServers": {
     "business-graph": {
-      "command": "business-graph-mcp",
-      "args": []
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/zokmi/business-graph.git", "business-graph-mcp"]
     }
   }
 }
@@ -82,16 +57,15 @@ Windows 絕對路徑範例：
 
 ## 4. 已有 llm-wiki-mcp 的使用者
 
-先停止使用舊 server 並移除舊註冊，再安裝與註冊新名稱。Claude Code user scope 的典型流程是：
+先停止使用舊 server 並移除舊註冊，再註冊新名稱。Claude Code user scope 的典型流程是：
 
 ```powershell
 claude mcp remove llm-wiki --scope user
-uv tool install --from "git+https://github.com/zokmi/business-graph.git" business-graph-mcp
-business-graph-mcp migrate <repo>
-claude mcp add business-graph --scope user -- business-graph-mcp
+claude mcp add business-graph --scope user -- uvx --from git+https://github.com/zokmi/business-graph.git business-graph-mcp
+uvx --from git+https://github.com/zokmi/business-graph.git business-graph-mcp migrate <repo>
 ```
 
-在已啟用 `business-graph-mcp` 的 Python 環境或本專案 checkout 中，遷移也可用計畫指定的 module 形式執行：
+在已啟用 `business-graph-mcp` 的 Python 環境或本專案 checkout 中，遷移也可直接以 Python module 執行：
 
 ```powershell
 python -m business_graph_mcp migrate <repo>
@@ -136,18 +110,16 @@ business_explore(
 
 ## 7. 更新
 
-```powershell
-uv tool upgrade business-graph-mcp
-```
-
-鎖定特定版本時重新執行帶 `@business-graph-mcp-v<版本>` 的安裝命令。更新磁碟上的套件後，須在 MCP client 重新連線或重開 session，既有 server 行程不會熱重載。
+預設的 `uvx` 指令指向 Git 倉庫 HEAD；重新連線時會檢查版本。若使用第 2 節的固定安裝方式，執行 `uv tool upgrade business-graph-mcp`。無論哪種方式，既有 server 行程都不會熱重載，更新後須重開 Claude Code 或重新連線。
 
 ## 8. 排錯
 
 | 症狀 | 處理 |
 |---|---|
 | 啟動顯示 SQLite 未啟用 FTS5 | 改用 `uv` 管理的 Python 或 python.org 官方版本；自行編譯 SQLite 時啟用 FTS5。 |
-| `/mcp` 看不到 `business-graph` | 重開 client，並以 `claude mcp list` 確認 key 與 scope。若 PATH 不同，改用執行檔絕對路徑。 |
+| `/mcp` 看不到 `business-graph` | 重開 client，並以 `claude mcp list` 確認 key 與 scope；另確認 Claude Code 能從 PATH 找到 `uvx`。 |
+| 首次 `uvx` 連線逾時 | 首次需要從 GitHub 下載並建立環境，重試連線；若持續逾時，使用第 2 節的固定安裝方式。 |
+| `uvx` 無法取得套件 | 確認 Git 可以讀取此私有倉庫，且 Claude Code 行程能使用相同的 GitHub 憑證。 |
 | `business_explore` 回覆尚未建立知識圖 | 正常初始狀態；第一次 `business_write` 會建立。 |
 | `business_write` 回覆與現況不符 | 節點在你讀取後已改變；重新 `business_explore`，以最新全文與 `base_hash` 重做更新。 |
 | code 錨點顯示「未解析」 | `.codegraph/codegraph.db` 不存在、不相容或查無符號。這是選用功能的降級，不影響節點、路徑與影響半徑。 |

@@ -8,15 +8,13 @@ Server 本身不呼叫 LLM，也不替內容背書。它負責儲存、檢索、
 
 ## 快速開始
 
-需要 Python 3.11 以上、[uv](https://docs.astral.sh/uv/) 與 Claude Code：
+需要 [uv](https://docs.astral.sh/uv/)（提供 `uvx`）與 Claude Code。此 GitHub 倉庫為私有倉庫，執行的帳號也必須有讀取權限。只要執行一條指令：
 
 ```powershell
-uv tool install --from "git+https://github.com/zokmi/business-graph.git" business-graph-mcp
-claude mcp add business-graph --scope user -- business-graph-mcp
-claude mcp get business-graph
+claude mcp add business-graph --scope user -- uvx --from git+https://github.com/zokmi/business-graph.git business-graph-mcp
 ```
 
-若 `business-graph-mcp` 不在 Claude Code 的 PATH，請在 `claude mcp add` 命令中改用執行檔的絕對路徑。重開 Claude Code 後，以 `/mcp` 確認連線。完整安裝與遷移步驟見 [SETUP.md](SETUP.md)。
+Claude Code 會在啟動 server 時透過 `uvx` 取得套件並快取於本機。首次連線需要下載與建置，可能較久；重開 Claude Code 後以 `/mcp` 確認連線。若要固定安裝於本機或處理啟動逾時，見 [SETUP.md](SETUP.md)。
 
 第一次 `business_write` 會在目前專案建立 `.bgraph/nodes/`；之後可用 `business_explore` 查詢，用 `business_lint` 檢查知識圖。每個工具都能傳入 `project_path` 指定專案位置。
 
