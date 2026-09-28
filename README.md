@@ -8,7 +8,7 @@ Server 本身不呼叫 LLM，也不替內容背書。它負責儲存、檢索、
 
 ## 快速開始
 
-需要 [uv](https://docs.astral.sh/uv/)（提供 `uvx`）與 Claude Code。此 GitHub 倉庫為私有倉庫，執行的帳號也必須有讀取權限。只要執行一條指令：
+需要 [uv](https://docs.astral.sh/uv/)（提供 `uvx`）與 Claude Code。只要執行一條指令：
 
 ```powershell
 claude mcp add business-graph --scope user -- uvx --from git+https://github.com/zokmi/business-graph.git business-graph-mcp

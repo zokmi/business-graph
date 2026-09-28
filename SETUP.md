@@ -4,7 +4,7 @@
 
 ## 1. Claude Code 一條指令安裝
 
-先確認已安裝 Claude Code 與 [uv](https://docs.astral.sh/uv/)（含 `uvx`），且 Git 可讀取此私有 GitHub 倉庫。執行：
+先確認已安裝 Claude Code 與 [uv](https://docs.astral.sh/uv/)（含 `uvx`），且 Git 可以連線到 GitHub。執行：
 
 ```powershell
 claude mcp add business-graph --scope user -- uvx --from git+https://github.com/zokmi/business-graph.git business-graph-mcp
@@ -120,7 +120,7 @@ business_explore(
 | 啟動顯示 SQLite 未啟用 FTS5 | 改用 `uv` 管理的 Python 或 python.org 官方版本；自行編譯 SQLite 時啟用 FTS5。 |
 | `/mcp` 看不到 `business-graph` | 重開 client，並以 `claude mcp list` 確認 key 與 scope；另確認 Claude Code 能從 PATH 找到 `uvx`。 |
 | 首次 `uvx` 連線逾時 | 首次需要從 GitHub 下載並建立環境，重試連線；若持續逾時，使用第 2 節的固定安裝方式。 |
-| `uvx` 無法取得套件 | 確認 Git 可以讀取此私有倉庫，且 Claude Code 行程能使用相同的 GitHub 憑證。 |
+| `uvx` 無法取得套件 | 確認 Git 可以連線到 GitHub，且 Claude Code 行程的網路設定允許下載。 |
 | `business_explore` 回覆尚未建立知識圖 | 正常初始狀態；第一次 `business_write` 會建立。 |
 | `business_write` 回覆與現況不符 | 節點在你讀取後已改變；重新 `business_explore`，以最新全文與 `base_hash` 重做更新。 |
 | code 錨點顯示「未解析」 | `.codegraph/codegraph.db` 不存在、不相容或查無符號。這是選用功能的降級，不影響節點、路徑與影響半徑。 |
