@@ -289,3 +289,85 @@ async def test_寫入的型別與_code_錨點會落進_front_matter_及索引(gr
         assert [tuple(row) for row in session.conn.execute(
             "SELECT edge_type, target_raw FROM edges WHERE source_slug = ?", ("New Rule",),
         )] == [("depends_on", "Shipping Rules")]
+
+
+async def test_頁面已保存但索引失敗時回傳新雜湊並可在下次同步恢復(graph, monkeypatch):
+    import business_graph_mcp.writer as writer
+
+    mcp = create_server()
+    real_sync = writer.sync_index
+
+    def fail_sync(*args, **kwargs):
+        raise RuntimeError('模擬索引寫入失敗')
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(writer, 'sync_index', fail_sync)
+        outcome = await _write(
+            mcp, graph, title='Saved Rule', content='saved before indexing',
+            status='inferred',
+        )
+    assert outcome['slug'] == 'Saved Rule'
+    assert outcome['indexed'] is False
+    assert outcome['dangling'] is None
+    assert outcome['base_hash']
+    assert '已保存' in outcome['warning']
+    saved = graph / '.bgraph' / 'nodes' / 'Saved Rule.md'
+    assert 'saved before indexing' in saved.read_text(encoding='utf-8')
+    assert 'Saved Rule' in await _recall(mcp, graph, 'saved before indexing')
+    assert writer.sync_index is real_sync
+
+
+async def test_保存後讀不到本頁時不得宣稱索引完成(graph, monkeypatch):
+    from pathlib import Path
+
+    from business_graph_mcp.db.queries import get_node, open_index
+
+    mcp = create_server()
+    target = graph / '.bgraph' / 'nodes' / 'Unreadable Rule.md'
+    real_read = Path.read_text
+
+    def unreadable(path, *args, **kwargs):
+        if path == target:
+            raise PermissionError('模擬保存後的暫時共享衝突')
+        return real_read(path, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(Path, 'read_text', unreadable)
+        outcome = await _write(
+            mcp, graph, title='Unreadable Rule', content='real saved knowledge',
+            status='inferred',
+        )
+    assert outcome['indexed'] is False
+    assert outcome['dangling'] is None
+    assert outcome['base_hash']
+    assert '已保存' in outcome['warning']
+    assert 'real saved knowledge' in target.read_text(encoding='utf-8')
+    conn = open_index(graph / '.bgraph' / 'index.db')
+    try:
+        indexed = get_node(conn, 'Unreadable Rule')
+        assert indexed is None or indexed.content_hash != outcome['base_hash']
+    finally:
+        conn.close()
+    assert 'real saved knowledge' in await _recall(mcp, graph, 'real saved knowledge')
+
+
+async def test_保存後關係查詢失敗仍回傳新雜湊(graph, monkeypatch):
+    import sqlite3
+
+    import business_graph_mcp.writer as writer
+
+    def fail_dangling(*args, **kwargs):
+        raise sqlite3.OperationalError('模擬關係查詢失敗')
+
+    mcp = create_server()
+    with monkeypatch.context() as patcher:
+        patcher.setattr(writer, 'dangling_targets', fail_dangling)
+        outcome = await _write(
+            mcp, graph, title='Saved Rule With Query Failure',
+            content='saved despite lookup failure', status='inferred',
+        )
+    assert outcome['indexed'] is False
+    assert outcome['dangling'] is None
+    assert outcome['base_hash']
+    assert '已保存' in outcome['warning']
+    assert 'saved despite lookup failure' in await _recall(mcp, graph, 'saved despite lookup failure')

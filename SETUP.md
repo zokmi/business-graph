@@ -87,6 +87,7 @@ python -m business_graph_mcp migrate <repo>
 .bgraph/index.db
 .bgraph/index.db-wal
 .bgraph/index.db-shm
+.bgraph/workspace.lock
 ```
 
 確認遷移結果並提交 `.bgraph/nodes/` 與需要的 `.bgraph/bgraph.toml` 後，才刪除舊 `.wiki/`；遷移程式本身不會刪除它。

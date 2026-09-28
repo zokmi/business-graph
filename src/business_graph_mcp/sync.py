@@ -54,98 +54,99 @@ def sync_index(conn: sqlite3.Connection, ws: Workspace, now: datetime) -> SyncRe
         ws: 知識庫。
         now: 本次同步時間，寫進 nodes.indexed_at。
     """
-    # 只有來源確實不存在時才視為空集合；權限或其他讀取錯誤必須中止，
-    # 不可把「無法列出檔案」誤判成全部刪除。
-    try:
-        entries = list(ws.nodes_dir.iterdir())
-    except FileNotFoundError:
-        entries = []
-
-    existing = all_content_hashes(conn)
-
-    ignored: list[str] = []
-    for path in sorted(ws.nodes_dir.rglob("*.md")):
-        if path.parent != ws.nodes_dir:
-            ignored.append(path.relative_to(ws.nodes_dir).as_posix())
-
-    on_disk = sorted(p for p in entries if p.match("*.md") and p.is_file())
-    disk_slugs = {p.stem for p in on_disk}
-
-    removed = 0
-    for slug in sorted(set(existing) - disk_slugs):
-        delete_node(conn, slug)
-        removed += 1
-
-    added = updated = unchanged = 0
-    failed: list[str] = []
-
-    for path in on_disk:
-        slug = path.stem
+    with conn:
+        # 只有來源確實不存在時才視為空集合；權限或其他讀取錯誤必須中止，
+        # 不可把「無法列出檔案」誤判成全部刪除。
         try:
-            text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError) as exc:
-            # 讀不到的檔不能中斷整體同步，但必須被看見。若它先前已在索引中，
-            # 保留舊資料——舊的內容仍比沒有內容有用。
-            failed.append(slug)
-            if slug not in existing:
-                upsert_node(
-                    conn,
-                    slug=slug,
-                    title=slug,
-                    node_type=None,
-                    aliases=(),
-                    body="",
-                    path=path.relative_to(ws.root).as_posix(),
-                    content_hash="",
-                    status=None,
-                    updated_at=None,
-                    parse_error=f"無法讀取檔案：{exc}",
-                    edges=(),
-                    code=(),
-                    indexed_at=now,
-                )
-            continue
+            entries = list(ws.nodes_dir.iterdir())
+        except FileNotFoundError:
+            entries = []
 
-        digest = content_hash(text)
-        if existing.get(slug) == digest:
-            unchanged += 1
-            continue
+        existing = all_content_hashes(conn)
 
-        parsed = parse_node(text)
-        if parsed.parse_error is not None:
-            failed.append(slug)
+        ignored: list[str] = []
+        for path in sorted(ws.nodes_dir.rglob("*.md")):
+            if path.parent != ws.nodes_dir:
+                ignored.append(path.relative_to(ws.nodes_dir).as_posix())
 
-        meta = parsed.meta
-        upsert_node(
-            conn,
-            slug=slug,
-            title=meta.title if meta else slug,
-            node_type=meta.node_type if meta else None,
-            aliases=meta.aliases if meta else (),
-            body=parsed.body,
-            path=path.relative_to(ws.root).as_posix(),
-            content_hash=digest,
-            status=meta.status if meta else None,
-            updated_at=meta.updated.isoformat() if meta else None,
-            parse_error=parsed.parse_error,
-            edges=parsed.edges if meta else (),
-            code=meta.code if meta else (),
-            indexed_at=now,
+        on_disk = sorted(p for p in entries if p.match("*.md") and p.is_file())
+        disk_slugs = {p.stem for p in on_disk}
+
+        removed = 0
+        for slug in sorted(set(existing) - disk_slugs):
+            delete_node(conn, slug)
+            removed += 1
+
+        added = updated = unchanged = 0
+        failed: list[str] = []
+
+        for path in on_disk:
+            slug = path.stem
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError) as exc:
+                # 讀不到的檔不能中斷整體同步，但必須被看見。若它先前已在索引中，
+                # 保留舊資料——舊的內容仍比沒有內容有用。
+                failed.append(slug)
+                if slug not in existing:
+                    upsert_node(
+                        conn,
+                        slug=slug,
+                        title=slug,
+                        node_type=None,
+                        aliases=(),
+                        body="",
+                        path=path.relative_to(ws.root).as_posix(),
+                        content_hash="",
+                        status=None,
+                        updated_at=None,
+                        parse_error=f"無法讀取檔案：{exc}",
+                        edges=(),
+                        code=(),
+                        indexed_at=now,
+                    )
+                continue
+
+            digest = content_hash(text)
+            if existing.get(slug) == digest:
+                unchanged += 1
+                continue
+
+            parsed = parse_node(text)
+            if parsed.parse_error is not None:
+                failed.append(slug)
+
+            meta = parsed.meta
+            upsert_node(
+                conn,
+                slug=slug,
+                title=meta.title if meta else slug,
+                node_type=meta.node_type if meta else None,
+                aliases=meta.aliases if meta else (),
+                body=parsed.body,
+                path=path.relative_to(ws.root).as_posix(),
+                content_hash=digest,
+                status=meta.status if meta else None,
+                updated_at=meta.updated.isoformat() if meta else None,
+                parse_error=parsed.parse_error,
+                edges=parsed.edges if meta else (),
+                code=meta.code if meta else (),
+                indexed_at=now,
+            )
+            if slug in existing:
+                updated += 1
+            else:
+                added += 1
+
+        # 更新 title 或 aliases 也會改變其他頁面既有連結的解析結果。
+        if added or updated or removed:
+            resolve_edges(conn)
+
+        return SyncResult(
+            added=added,
+            updated=updated,
+            removed=removed,
+            unchanged=unchanged,
+            failed=tuple(sorted(failed)),
+            ignored=tuple(sorted(ignored)),
         )
-        if slug in existing:
-            updated += 1
-        else:
-            added += 1
-
-    # 更新 title 或 aliases 也會改變其他頁面既有連結的解析結果。
-    if added or updated or removed:
-        resolve_edges(conn)
-
-    return SyncResult(
-        added=added,
-        updated=updated,
-        removed=removed,
-        unchanged=unchanged,
-        failed=tuple(sorted(failed)),
-        ignored=tuple(sorted(ignored)),
-    )

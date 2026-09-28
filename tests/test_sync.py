@@ -343,3 +343,75 @@ def test_同步保存型別與錨點且解析失敗清除關係(ws, conn):
     assert queries.get_node(conn, "A").node_type is None
     assert queries.code_anchors_for(conn, ["A"]) == {}
     assert queries.impact_edges(conn) == []
+
+
+def test_關係重解失敗時整輪同步回滾且下次可恢復(ws, monkeypatch):
+    import business_graph_mcp.sync as sync_module
+
+    寫頁(ws, "A", 內文="See [[depends_on:B]].")
+    connection = open_index(ws.db_path)
+    try:
+        sync_index(connection, ws, 現在)
+        寫頁(ws, "B", 內文="Target.")
+
+        def 失敗(_connection):
+            raise RuntimeError("模擬關係重解中斷")
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr(sync_module, "resolve_edges", 失敗)
+            with pytest.raises(RuntimeError, match="關係重解中斷"):
+                sync_index(connection, ws, 現在)
+        assert get_node(connection, "B") is None
+    finally:
+        connection.close()
+
+    reopened = open_index(ws.db_path)
+    try:
+        result = sync_index(reopened, ws, 現在)
+        assert result.added == 1
+        assert ("A", "depends_on", "B") in resolved_edges(reopened)
+    finally:
+        reopened.close()
+
+
+def test_第二頁更新失敗時所有索引表維持舊快照(ws, monkeypatch):
+    import business_graph_mcp.sync as sync_module
+
+    寫頁(ws, "A", 內文="See [[depends_on:B]].", aliases=("alpha",))
+    寫頁(ws, "B", 內文="Old target.", aliases=("beta",))
+    connection = open_index(ws.db_path)
+    try:
+        sync_index(connection, ws, 現在)
+
+        def snapshot():
+            return tuple(
+                tuple(map(tuple, connection.execute(query).fetchall()))
+                for query in (
+                    "SELECT slug,title,body,content_hash FROM nodes ORDER BY slug",
+                    "SELECT rowid,title,aliases_text,body FROM nodes_fts ORDER BY rowid",
+                    "SELECT slug,alias FROM aliases ORDER BY slug,alias",
+                    "SELECT source_slug,edge_type,target_raw,target_slug FROM edges ORDER BY source_slug",
+                    "SELECT slug,symbol FROM code_anchors ORDER BY slug,symbol",
+                )
+            )
+
+        before = snapshot()
+        寫頁(ws, "A", 內文="New A body.", aliases=("new alpha",))
+        寫頁(ws, "B", 內文="New B body.", aliases=("new beta",))
+        real_upsert = sync_module.upsert_node
+        calls = 0
+
+        def fail_second(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("模擬第二頁更新中斷")
+            return real_upsert(*args, **kwargs)
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr(sync_module, "upsert_node", fail_second)
+            with pytest.raises(RuntimeError, match="第二頁更新中斷"):
+                sync_index(connection, ws, 現在)
+        assert snapshot() == before
+    finally:
+        connection.close()

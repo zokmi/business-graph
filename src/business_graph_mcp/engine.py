@@ -15,6 +15,7 @@ from pathlib import Path
 from business_graph_mcp.config import GraphConfig, load_config
 from business_graph_mcp.db.queries import open_index
 from business_graph_mcp.errors import GraphNotFoundError
+from business_graph_mcp.locking import workspace_lock
 from business_graph_mcp.sync import SyncResult, sync_index
 from business_graph_mcp.workspace import Workspace, ensure_workspace, find_workspace
 
@@ -61,10 +62,11 @@ def open_session(project_path: str | None, *, create: bool = False) -> Iterator[
             )
         ws = found
 
-    cfg = load_config(ws.config_path)
-    conn = open_index(ws.db_path)
-    try:
-        result = sync_index(conn, ws, datetime.now())
-        yield Session(ws=ws, conn=conn, cfg=cfg, sync=result)
-    finally:
-        conn.close()
+    with workspace_lock(ws.root):
+        cfg = load_config(ws.config_path)
+        conn = open_index(ws.db_path)
+        try:
+            result = sync_index(conn, ws, datetime.now())
+            yield Session(ws=ws, conn=conn, cfg=cfg, sync=result)
+        finally:
+            conn.close()

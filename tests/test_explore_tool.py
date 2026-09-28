@@ -238,3 +238,72 @@ async def test_explore_沒有_codegraph_索引仍顯示未解析錨點及內文(
     assert "Missing.Symbol — 未解析" in text
     assert "Tier discounts." in text
     assert "base_hash" in text
+
+
+async def test_慢速同步不阻塞事件迴圈(graph, monkeypatch):
+    import asyncio
+    import threading
+    import time
+
+    import business_graph_mcp.engine as engine
+
+    entered = threading.Event()
+    release = threading.Event()
+    real_sync = engine.sync_index
+
+    def slow_sync(*args, **kwargs):
+        entered.set()
+        assert release.wait(2), '測試同步等待逾時'
+        return real_sync(*args, **kwargs)
+
+    monkeypatch.setattr(engine, 'sync_index', slow_sync)
+    mcp = create_server()
+    task = asyncio.create_task(call_tool(mcp, 'business_explore', {
+        'query': 'discounts', 'project_path': str(graph),
+    }))
+    try:
+        start = time.monotonic()
+        assert await asyncio.to_thread(entered.wait, 1)
+        await asyncio.sleep(0.02)
+        assert time.monotonic() - start < 0.5
+    finally:
+        release.set()
+        await task
+
+
+async def test_取消等待後工作執行緒完成前仍持有工作區鎖(graph, monkeypatch):
+    import asyncio
+    import threading
+
+    import business_graph_mcp.engine as engine
+
+    entered = threading.Event()
+    release = threading.Event()
+    real_sync = engine.sync_index
+    calls = 0
+
+    def slow_first_sync(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            assert release.wait(2), '測試同步等待逾時'
+        return real_sync(*args, **kwargs)
+
+    monkeypatch.setattr(engine, 'sync_index', slow_first_sync)
+    mcp = create_server()
+    args = {'query': 'discounts', 'project_path': str(graph)}
+    first = asyncio.create_task(call_tool(mcp, 'business_explore', args))
+    second = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        second = asyncio.create_task(call_tool(mcp, 'business_explore', args))
+        await asyncio.sleep(0.1)
+        assert not second.done()
+    finally:
+        release.set()
+        await asyncio.gather(first, *( [second] if second is not None else [] ), return_exceptions=True)
+    assert second is not None and second.result()['result']

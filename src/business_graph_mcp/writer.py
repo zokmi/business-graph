@@ -14,9 +14,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from business_graph_mcp.db.queries import dangling_targets
+from business_graph_mcp.db.queries import dangling_targets, get_node
 from business_graph_mcp.engine import Session
-from business_graph_mcp.errors import GraphConflictError, GraphError
+from business_graph_mcp.errors import GraphConflictError, GraphError, GraphIndexError
 from business_graph_mcp.node import (
     VALID_NODE_TYPES,
     VALID_STATUSES,
@@ -43,7 +43,9 @@ class WriteOutcome:
     slug: str
     created: bool
     base_hash: str
-    dangling: tuple[str, ...]
+    dangling: tuple[str, ...] | None
+    indexed: bool = True
+    warning: str | None = None
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -174,16 +176,32 @@ def write_node(
     session.ws.nodes_dir.mkdir(parents=True, exist_ok=True)
     _atomic_write(path, text)
 
-    # 直接重跑同步而非手動 upsert：連結重新解析、雜湊比對等邏輯已在
-    # sync_index 中測過，重用比複製一份平行實作可靠。
-    # 回傳的 SyncResult 在此刻意捨棄——本頁剛寫入，added/updated 必然反映
-    # 這次變更，沒有新資訊；ignored/failed 等既有狀態則由 open_session
-    # 進場時的同步結果負責回報，不必在這裡重複判讀。
-    sync_index(session.conn, session.ws, datetime.now())
+    # Markdown 已原子替換，後續任何索引或回應查詢失敗都必須保留新雜湊。
+    digest = content_hash(text)
+    try:
+        sync_result = sync_index(session.conn, session.ws, datetime.now())
+        indexed = get_node(session.conn, slug)
+        if (
+            slug in sync_result.failed
+            or indexed is None
+            or indexed.content_hash != digest
+            or indexed.parse_error is not None
+        ):
+            raise GraphIndexError(f"〈{slug}〉本次未成功進入索引。")
+        dangling = dangling_targets(session.conn, [slug]).get(slug, ())
+    except Exception as exc:
+        return WriteOutcome(
+            slug=slug,
+            created=not exists,
+            base_hash=digest,
+            dangling=None,
+            indexed=False,
+            warning=f"Markdown 已保存，但索引同步或驗證失敗；下次工具呼叫會重試：{exc}",
+        )
 
     return WriteOutcome(
         slug=slug,
         created=not exists,
-        base_hash=content_hash(text),
-        dangling=dangling_targets(session.conn, [slug]).get(slug, ()),
+        base_hash=digest,
+        dangling=dangling,
     )

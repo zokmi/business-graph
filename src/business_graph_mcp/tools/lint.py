@@ -1,6 +1,7 @@
 """business_lint 工具：知識庫的一致性稽核。"""
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Annotated, Any
 
@@ -49,8 +50,11 @@ def register(mcp: Any) -> None:
         參數:
             project_path: 專案中的任一路徑，用於定位 .bgraph/。
         """
-        try:
-            with open_session(project_path) as session:
-                return {"result": run_lint(session, date.today())}
-        except GraphNotFoundError as exc:
-            return {"result": str(exc)}
+        def _run() -> dict[str, str]:
+            try:
+                with open_session(project_path) as session:
+                    return {"result": run_lint(session, date.today())}
+            except GraphNotFoundError as exc:
+                return {"result": str(exc)}
+
+        return await asyncio.to_thread(_run)

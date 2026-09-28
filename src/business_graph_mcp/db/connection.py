@@ -40,7 +40,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
-        # WAL 讓讀取不被寫入阻塞。索引是衍生物，即使 WAL 檔異常也只需刪庫重建。
+        # WAL 讓讀取不被寫入阻塞；是否重建由 db.index.open_index 判定。
         conn.execute("PRAGMA journal_mode = WAL")
     except BaseException:
         # 檔案損毀（非 SQLite 格式）時上面的 PRAGMA 會拋例外；若不在此

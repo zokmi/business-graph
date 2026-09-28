@@ -1,7 +1,10 @@
 """索引 schema 與頁面存取的測試。"""
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime
+
+import pytest
 
 from business_graph_mcp.db.queries import (
     SCHEMA_VERSION,
@@ -537,13 +540,15 @@ def test_寫入失敗時節點別名邊錨點與全文索引一起復原(tmp_pat
         _寫節點(conn, "B")
         _寫節點(conn, "A", edges=(Edge("depends_on", "B", None),), code=("Old.Symbol",))
         conn.execute("CREATE TRIGGER reject_anchor BEFORE INSERT ON code_anchors BEGIN SELECT RAISE(ABORT, '拒絕錨點'); END")
+        conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
-            queries.upsert_node(
-                conn, slug="A", title="Changed", node_type="flow", aliases=("Changed",),
-                body="Changed body", path="nodes/A.md", content_hash="new",
-                status="inferred", updated_at=None, parse_error=None,
-                edges=(), code=("New.Symbol",), indexed_at=現在,
-            )
+            with conn:
+                queries.upsert_node(
+                    conn, slug="A", title="Changed", node_type="flow", aliases=("Changed",),
+                    body="Changed body", path="nodes/A.md", content_hash="new",
+                    status="inferred", updated_at=None, parse_error=None,
+                    edges=(), code=("New.Symbol",), indexed_at=現在,
+                )
         node = queries.get_node(conn, "A")
         assert node.title == "A"
         assert node.node_type == "rule"
@@ -620,3 +625,92 @@ def test_無錨點規則依_slug_排序且回傳完整節點(tmp_path):
         assert rows[0].body == "Alpha 的內文。"
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize('code', [
+    sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_IOERR,
+    sqlite3.SQLITE_READONLY, sqlite3.SQLITE_FULL,
+])
+def test_暫時性索引錯誤不可刪除既有資料庫(tmp_path, monkeypatch, code):
+    import importlib
+    from pathlib import Path
+
+    from business_graph_mcp.errors import GraphIndexError
+
+    db = tmp_path / 'index.db'
+    conn = open_index(db)
+    conn.close()
+    original_bytes = db.read_bytes()
+    module = importlib.import_module(open_index.__module__)
+    error = sqlite3.OperationalError('simulated unavailable index')
+    error.sqlite_errorcode = code
+
+    def fail_connect(_path):
+        raise error
+
+    real_unlink = Path.unlink
+    def forbid_unlink(path, *args, **kwargs):
+        if path == db:
+            raise AssertionError('暫時性錯誤不得刪除索引')
+        return real_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(module, 'connect', fail_connect)
+        patcher.setattr(Path, 'unlink', forbid_unlink)
+        with pytest.raises(GraphIndexError):
+            open_index(db)
+    assert db.read_bytes() == original_bytes
+
+
+def test_新索引建表失敗時關閉連線(tmp_path, monkeypatch):
+    import importlib
+
+    from business_graph_mcp.errors import GraphIndexError
+
+    module = importlib.import_module(open_index.__module__)
+    real_connect = module.connect
+    opened = []
+
+    def tracked_connect(path):
+        conn = real_connect(path)
+        opened.append(conn)
+        return conn
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(module, 'connect', tracked_connect)
+        patcher.setattr(module, '_SCHEMA_SQL', 'INVALID SQL;')
+        with pytest.raises(GraphIndexError):
+            open_index(tmp_path / 'index.db')
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+        opened[0].execute('SELECT 1')
+
+
+def test_索引缺少版本資料時重建(tmp_path):
+    db = tmp_path / 'index.db'
+    conn = open_index(db)
+    conn.execute("DELETE FROM meta WHERE key = 'schema_version'")
+    conn.commit()
+    conn.close()
+    reopened = open_index(db)
+    try:
+        assert reopened.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == '1'
+    finally:
+        reopened.close()
+
+
+def test_meta_缺少必要欄位時重建索引(tmp_path):
+    db = tmp_path / 'index.db'
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute('CREATE TABLE meta (key TEXT PRIMARY KEY, wrong_value TEXT)')
+        conn.execute("INSERT INTO meta VALUES ('schema_version', '1')")
+        conn.commit()
+    finally:
+        conn.close()
+    reopened = open_index(db)
+    try:
+        assert reopened.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == '1'
+        assert reopened.execute('SELECT COUNT(*) FROM nodes').fetchone()[0] == 0
+    finally:
+        reopened.close()

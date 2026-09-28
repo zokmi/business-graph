@@ -26,6 +26,8 @@ Claude Code 會在啟動 server 時透過 `uvx` 取得套件並快取於本機�
 | `business_write(title, type, content, status, aliases?, code?, base_hash?, project_path?)` | 建立或整頁更新節點。更新既有節點須帶 `business_explore` 回傳的 `base_hash`；雜湊不符時拒絕覆寫。 |
 | `business_lint(project_path?)` | 稽核過期、未確認、懸空、孤兒、反覆未命中、共現未連結、未解析程式碼錨點、無 code 的 rule 與未提交變更，並給出修正指引。 |
 
+若 `business_write` 已保存 Markdown、但索引同步或驗證失敗，回應會包含 `indexed: false`、新的 `base_hash`、`dangling: null` 與警告。內容已寫入；下次工具呼叫會重試同步，請勿拿舊 `base_hash` 重送。
+
 三個工具共用 server 指示詞：業務問題先查，查無或不足而本次已弄清楚時寫回，發現既有節點過時時主動更正。詳見 `src/business_graph_mcp/server.py` 的 `INSTRUCTIONS`。
 
 ## `.bgraph/` 結構
@@ -39,18 +41,22 @@ Claude Code 會在啟動 server 時透過 `uvx` 取得套件並快取於本機�
    │  ├─ Customer Tier.md
    │  └─ ...
    ├─ bgraph.toml      # 選用設定檔
-   └─ index.db         # 衍生的 SQLite FTS5 索引，不進 git
+   ├─ index.db         # 衍生的 SQLite FTS5 索引，不進 git
+   └─ workspace.lock   # 跨行程鎖檔，不進 git
 ```
 
-將索引及其 SQLite sidecar 加到使用端 repo 的 `.gitignore`：
+將索引、SQLite sidecar 與鎖檔加到使用端 repo 的 `.gitignore`：
 
 ```gitignore
 .bgraph/index.db
 .bgraph/index.db-wal
 .bgraph/index.db-shm
+.bgraph/workspace.lock
 ```
 
 `nodes/` 必須進版控。索引只是衍生物，schema 版本改變時會重建。每次工具呼叫前會依內容雜湊做 lazy sync，手動修改 Markdown 後不需啟動 watcher。
+
+同一個知識庫的工具呼叫會持有 `workspace.lock`，最多等待 10 秒；若其他 server 行程持鎖過久，可稍後重試。索引同步以整批交易提交，失敗後下次呼叫會重新比對 Markdown 並重試。暫時性的 SQLite 鎖定或 I/O 錯誤會保留索引原檔。
 
 ## 節點格式
 

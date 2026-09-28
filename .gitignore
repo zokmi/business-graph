@@ -10,3 +10,4 @@ dist/
 .bgraph/index.db
 .bgraph/index.db-wal
 .bgraph/index.db-shm
+.bgraph/workspace.lock

@@ -18,5 +18,9 @@ class GraphIndexError(GraphError):
     """索引無法讀寫，或執行環境缺少必要的 SQLite 功能。"""
 
 
+class GraphLockTimeoutError(GraphError):
+    """工作區正被其他行程使用，逾時後可重試。"""
+
+
 class GraphMigrationError(GraphError):
     """環境無法安全發布遷移檔案，需修正後重跑。"""

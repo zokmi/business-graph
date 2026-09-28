@@ -9,23 +9,15 @@ import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from importlib.resources import files
-from pathlib import Path
 
-from business_graph_mcp.db.connection import connect
+from business_graph_mcp.db.index import SCHEMA_VERSION as SCHEMA_VERSION
+from business_graph_mcp.db.index import open_index as open_index
 from business_graph_mcp.edges import IMPACT_EDGE_TYPES, Edge
 from business_graph_mcp.node import NODE_RULE
 from business_graph_mcp.tokenizer import segment_cjk
 
-#: 索引 schema 版本。索引是衍生物，版本不符時直接刪庫重建，不提供 migration。
-#: business-graph 從 1 重新起算，與舊產品及過渡期索引乾淨切斷。
-SCHEMA_VERSION = 1
-
 #: 別名在 nodes.aliases_text 中的分隔符號；不會出現在正常術語裡。
 _ALIAS_SEP = "\x1f"
-
-_SCHEMA_SQL = (files("business_graph_mcp.db") / "schema.sql").read_text(encoding="utf-8")
-
 
 @dataclass(frozen=True)
 class NodeRow:
@@ -81,51 +73,6 @@ def _row_to_node(row: sqlite3.Row) -> NodeRow:
     )
 
 
-def open_index(db_path: Path) -> sqlite3.Connection:
-    """開啟索引資料庫，必要時建立或重建。
-
-    schema 版本與 SCHEMA_VERSION 不符時直接刪檔重建：索引是衍生物，
-    內容真相在 markdown，重建成本遠低於維護一套 migration。
-
-    參數:
-        db_path: index.db 的路徑。
-    """
-    if db_path.is_file():
-        conn: sqlite3.Connection | None = None
-        try:
-            # connect() 本身（PRAGMA journal_mode = WAL 等）在檔案根本不是
-            # SQLite 格式時就會拋出 DatabaseError，因此連 connect() 都要
-            # 包在同一個 try 裡，不能只包住後面的 SELECT。
-            conn = connect(db_path)
-            row = conn.execute(
-                "SELECT value FROM meta WHERE key = 'schema_version'"
-            ).fetchone()
-            if row is not None and int(row["value"]) == SCHEMA_VERSION:
-                return conn
-        except (sqlite3.DatabaseError, ValueError, TypeError):
-            # 檔案損毀、根本不是 SQLite 資料庫，或 schema_version 的值
-            # 不是合法整數（外部工具寫入、部分寫入、手動編輯），一律以
-            # 重建處理——索引是可拋棄的衍生物，這裡不該讓任何解析例外
-            # 穿出去，否則整個 server 三個工具都會失效。
-            pass
-        if conn is not None:
-            conn.close()
-        db_path.unlink()
-        # WAL 與 shared-memory 附檔一併清掉，否則重建後仍可能讀到舊資料。
-        for suffix in ("-wal", "-shm"):
-            sidecar = db_path.with_name(db_path.name + suffix)
-            sidecar.unlink(missing_ok=True)
-
-    conn = connect(db_path)
-    conn.executescript(_SCHEMA_SQL)
-    conn.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
-        (str(SCHEMA_VERSION),),
-    )
-    conn.commit()
-    return conn
-
-
 def upsert_node(
     conn: sqlite3.Connection,
     *,
@@ -164,100 +111,99 @@ def upsert_node(
         code: front matter 宣告的程式碼符號。
         indexed_at: 本次索引時間。
     """
-    with conn:
-        aliases_text = _ALIAS_SEP.join(aliases)
-        conn.execute(
-            """
-            INSERT INTO nodes (
-                slug, title, node_type, aliases_text, body, path, content_hash,
-                status, updated_at, indexed_at, parse_error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (slug) DO UPDATE SET
-                title = excluded.title,
-                node_type = excluded.node_type,
-                aliases_text = excluded.aliases_text,
-                body = excluded.body,
-                path = excluded.path,
-                content_hash = excluded.content_hash,
-                status = excluded.status,
-                updated_at = excluded.updated_at,
-                indexed_at = excluded.indexed_at,
-                parse_error = excluded.parse_error
-            """,
+    aliases_text = _ALIAS_SEP.join(aliases)
+    conn.execute(
+        """
+        INSERT INTO nodes (
+            slug, title, node_type, aliases_text, body, path, content_hash,
+            status, updated_at, indexed_at, parse_error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (slug) DO UPDATE SET
+            title = excluded.title,
+            node_type = excluded.node_type,
+            aliases_text = excluded.aliases_text,
+            body = excluded.body,
+            path = excluded.path,
+            content_hash = excluded.content_hash,
+            status = excluded.status,
+            updated_at = excluded.updated_at,
+            indexed_at = excluded.indexed_at,
+            parse_error = excluded.parse_error
+        """,
+        (
+            slug,
+            title,
+            node_type,
+            aliases_text,
+            body,
+            path,
+            content_hash,
+            status,
+            updated_at,
+            indexed_at.isoformat(timespec="seconds"),
+            parse_error,
+        ),
+    )
+    node_id = conn.execute("SELECT id FROM nodes WHERE slug = ?", (slug,)).fetchone()["id"]
+
+    conn.execute("DELETE FROM aliases WHERE slug = ?", (slug,))
+    conn.executemany(
+        "INSERT OR IGNORE INTO aliases (slug, alias) VALUES (?, ?)",
+        [(slug, alias) for alias in aliases],
+    )
+
+    conn.execute("DELETE FROM edges WHERE source_slug = ?", (slug,))
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO edges (source_slug, edge_type, target_raw, target_slug)
+        VALUES (?, ?, ?, COALESCE(
+            -- 先比對 slug：slug 是頁面的正式身分，命中優先權最高。
+            (SELECT slug FROM nodes   WHERE slug  = ? COLLATE NOCASE),
+            -- 找不到再比對 alias：別名是輔助識別，中文術語常寫成別名而非標題。
+            -- 重複 alias 沿用可解析行為，但以 slug 排序，避免依賴資料庫掃描順序。
+            (SELECT slug FROM aliases WHERE alias = ? COLLATE NOCASE
+             ORDER BY slug COLLATE NOCASE, slug LIMIT 1),
+            -- 最後比對原始 title，讓含冒號等檔名不安全字元的標題仍可連結。
+            -- 重複 title 是歧義，不猜其中一個；保留 NULL 交由 lint 報懸空。
+            (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(slug) END
+             FROM nodes WHERE title = ? COLLATE NOCASE)
+        ))
+        """,
+        [
             (
                 slug,
-                title,
-                node_type,
-                aliases_text,
-                body,
-                path,
-                content_hash,
-                status,
-                updated_at,
-                indexed_at.isoformat(timespec="seconds"),
-                parse_error,
-            ),
-        )
-        node_id = conn.execute("SELECT id FROM nodes WHERE slug = ?", (slug,)).fetchone()["id"]
+                edge.edge_type,
+                edge.target,
+                edge.target,
+                edge.target,
+                edge.target,
+            )
+            for edge in edges
+            if edge.error is None
+        ],
+    )
+    # 注意：這裡只解析「本頁自己的」連結。新頁出現會讓「別頁」原本懸空的連結
+    # 變成有效，那需要全表重解，但每寫一頁就做一次是 O(頁數 × 連結數)——
+    # 初次索引上千頁時要數秒。全表重解改由 sync_index 在一輪結束時呼叫
+    # resolve_edges() 做一次。
 
-        conn.execute("DELETE FROM aliases WHERE slug = ?", (slug,))
-        conn.executemany(
-            "INSERT OR IGNORE INTO aliases (slug, alias) VALUES (?, ?)",
-            [(slug, alias) for alias in aliases],
-        )
+    conn.execute("DELETE FROM code_anchors WHERE slug = ?", (slug,))
+    conn.executemany(
+        "INSERT OR IGNORE INTO code_anchors (slug, symbol) VALUES (?, ?)",
+        [(slug, symbol) for symbol in code],
+    )
 
-        conn.execute("DELETE FROM edges WHERE source_slug = ?", (slug,))
-        conn.executemany(
-            """
-            INSERT OR IGNORE INTO edges (source_slug, edge_type, target_raw, target_slug)
-            VALUES (?, ?, ?, COALESCE(
-                -- 先比對 slug：slug 是頁面的正式身分，命中優先權最高。
-                (SELECT slug FROM nodes   WHERE slug  = ? COLLATE NOCASE),
-                -- 找不到再比對 alias：別名是輔助識別，中文術語常寫成別名而非標題。
-                -- 重複 alias 沿用可解析行為，但以 slug 排序，避免依賴資料庫掃描順序。
-                (SELECT slug FROM aliases WHERE alias = ? COLLATE NOCASE
-                 ORDER BY slug COLLATE NOCASE, slug LIMIT 1),
-                -- 最後比對原始 title，讓含冒號等檔名不安全字元的標題仍可連結。
-                -- 重複 title 是歧義，不猜其中一個；保留 NULL 交由 lint 報懸空。
-                (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(slug) END
-                 FROM nodes WHERE title = ? COLLATE NOCASE)
-            ))
-            """,
-            [
-                (
-                    slug,
-                    edge.edge_type,
-                    edge.target,
-                    edge.target,
-                    edge.target,
-                    edge.target,
-                )
-                for edge in edges
-                if edge.error is None
-            ],
-        )
-        # 注意：這裡只解析「本頁自己的」連結。新頁出現會讓「別頁」原本懸空的連結
-        # 變成有效，那需要全表重解，但每寫一頁就做一次是 O(頁數 × 連結數)——
-        # 初次索引上千頁時要數秒。全表重解改由 sync_index 在一輪結束時呼叫
-        # resolve_edges() 做一次。
-
-        conn.execute("DELETE FROM code_anchors WHERE slug = ?", (slug,))
-        conn.executemany(
-            "INSERT OR IGNORE INTO code_anchors (slug, symbol) VALUES (?, ?)",
-            [(slug, symbol) for symbol in code],
-        )
-
-        # FTS 存分詞後的文字；先刪後插，避免同一 rowid 留下舊內容。
-        conn.execute("DELETE FROM nodes_fts WHERE rowid = ?", (node_id,))
-        conn.execute(
-            "INSERT INTO nodes_fts (rowid, title, aliases_text, body) VALUES (?, ?, ?, ?)",
-            (
-                node_id,
-                segment_cjk(title),
-                segment_cjk(" ".join(aliases)),
-                segment_cjk(body),
-            ),
-        )
+    # FTS 存分詞後的文字；先刪後插，避免同一 rowid 留下舊內容。
+    conn.execute("DELETE FROM nodes_fts WHERE rowid = ?", (node_id,))
+    conn.execute(
+        "INSERT INTO nodes_fts (rowid, title, aliases_text, body) VALUES (?, ?, ?, ?)",
+        (
+            node_id,
+            segment_cjk(title),
+            segment_cjk(" ".join(aliases)),
+            segment_cjk(body),
+        ),
+    )
 
 
 def resolve_edges(conn: sqlite3.Connection) -> None:
@@ -290,7 +236,6 @@ def resolve_edges(conn: sqlite3.Connection) -> None:
         )
         """
     )
-    conn.commit()
 
 
 def delete_node(conn: sqlite3.Connection, slug: str) -> None:
@@ -312,7 +257,6 @@ def delete_node(conn: sqlite3.Connection, slug: str) -> None:
     conn.execute("DELETE FROM aliases WHERE slug = ?", (slug,))
     conn.execute("DELETE FROM edges WHERE source_slug = ?", (slug,))
     conn.execute("DELETE FROM code_anchors WHERE slug = ?", (slug,))
-    conn.commit()
 
 
 def get_node(conn: sqlite3.Connection, slug: str) -> NodeRow | None:

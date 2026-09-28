@@ -1,6 +1,7 @@
 """business_explore 工具：知識庫的唯一讀取入口。"""
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime
 from typing import Annotated, Any
 
@@ -69,30 +70,33 @@ def register(mcp: Any) -> None:
             query: 要查的業務問題或關鍵字。
             project_path: 專案中的任一路徑，用於定位 .bgraph/。
         """
-        try:
-            with open_session(project_path) as session:
-                result = run_explore(session.conn, query, session.cfg)
+        def _run() -> dict[str, str]:
+            try:
+                with open_session(project_path) as session:
+                    result = run_explore(session.conn, query, session.cfg)
 
-                miss_count = 0
-                if not result.hits:
-                    miss_count = record_miss(session.conn, _normalize(query), datetime.now())
+                    miss_count = 0
+                    if not result.hits:
+                        miss_count = record_miss(session.conn, _normalize(query), datetime.now())
 
-                dangling = dangling_targets(
-                    session.conn, [h.page.slug for h in result.hits]
-                )
-                notices = build_notices(
-                    result,
-                    session.cfg,
-                    query=query,
-                    miss_count=miss_count,
-                    dangling=dangling,
-                    today=date.today(),
-                )
-                symbols = sorted({s for anchors in result.anchors.values() for s in anchors})
-                anchor_locations = resolve_symbols(find_codegraph_db(session.ws.root), symbols)
-                return {
-                    "result": format_explore(result, notices, session.sync, anchor_locations)
-                }
-        except GraphNotFoundError as exc:
-            # Spec 第九節原則 3：尚未建立知識圖是正常狀態，不是錯誤。
-            return {"result": str(exc)}
+                    dangling = dangling_targets(
+                        session.conn, [h.page.slug for h in result.hits]
+                    )
+                    notices = build_notices(
+                        result,
+                        session.cfg,
+                        query=query,
+                        miss_count=miss_count,
+                        dangling=dangling,
+                        today=date.today(),
+                    )
+                    symbols = sorted({s for anchors in result.anchors.values() for s in anchors})
+                    anchor_locations = resolve_symbols(find_codegraph_db(session.ws.root), symbols)
+                    return {
+                        "result": format_explore(result, notices, session.sync, anchor_locations)
+                    }
+            except GraphNotFoundError as exc:
+                # Spec 第九節原則 3：尚未建立知識圖是正常狀態，不是錯誤。
+                return {"result": str(exc)}
+
+        return await asyncio.to_thread(_run)

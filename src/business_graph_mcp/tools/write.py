@@ -1,6 +1,7 @@
 """business_write 工具：建立或更新一頁業務知識。"""
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Annotated, Any
 
@@ -105,21 +106,28 @@ def register(mcp: Any) -> None:
             base_hash: 更新既有頁時的樂觀鎖值。
             project_path: 專案中的任一路徑，用於定位 .bgraph/。
         """
-        with open_session(project_path, create=True) as session:
-            outcome = write_node(
-                session,
-                title=title,
-                node_type=type,
-                content=content,
-                status=status,
-                aliases=tuple(aliases or ()),
-                code=tuple(code or ()),
-                base_hash=base_hash,
-                today=date.today(),
-            )
-            return {
-                "slug": outcome.slug,
-                "created": outcome.created,
-                "base_hash": outcome.base_hash,
-                "dangling": list(outcome.dangling),
-            }
+        def _run() -> dict[str, object]:
+            with open_session(project_path, create=True) as session:
+                outcome = write_node(
+                    session,
+                    title=title,
+                    node_type=type,
+                    content=content,
+                    status=status,
+                    aliases=tuple(aliases or ()),
+                    code=tuple(code or ()),
+                    base_hash=base_hash,
+                    today=date.today(),
+                )
+                response: dict[str, object] = {
+                    "slug": outcome.slug,
+                    "created": outcome.created,
+                    "base_hash": outcome.base_hash,
+                    "dangling": list(outcome.dangling) if outcome.dangling is not None else None,
+                    "indexed": outcome.indexed,
+                }
+                if outcome.warning is not None:
+                    response["warning"] = outcome.warning
+                return response
+
+        return await asyncio.to_thread(_run)
