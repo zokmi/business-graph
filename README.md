@@ -1,6 +1,6 @@
 # business-graph-mcp
 
-本機端、隨 repo 版控的業務邏輯知識圖，供 LLM agent（如 Claude Code）查詢、連結並累積規則、實體、決策與術語。
+`business-graph-mcp` 是獨立發行的 Python 套件與 stdio MCP server，供 Claude Code 等 LLM agent 在 Git 專案中查詢、連結並累積業務規則、實體、決策與術語。知識以 Markdown 存在專案的 `.bgraph/nodes/`，可隨專案版控；使用本套件不需要安裝其他 MCP server。
 
 專案的業務知識常散落在對話、人的記憶與程式碼註解中。`business-graph-mcp` 讓 agent 在處理業務問題前先查；查無或內容不足時，把本次釐清的答案寫回。節點之間有明確關係，因此查詢也能回答「這條規則依賴什麼」與「改動它會波及誰」。
 
@@ -153,18 +153,6 @@ explore_depth = 2
 - 不該命中組分數落在 `[0.0, 1.8849]`（排除一筆因英數詞前綴運算子造成詞根巧合的查詢，`stand*` 誤中 `standard`，那是 tokenizer 刻意的召回優先取捨，非門檻雜訊）
 
 兩組不重疊，選定 **2.0**：貼近不該命中組上限，寧可漏掉部分邊緣情況的警告，也不讓門檻逼近應命中組下緣而誤標真正的好命中——警報氾濫，agent 就會開始無視所有提醒。
-
-## 從 llm-wiki-mcp 遷移
-
-先安裝新套件，再在舊 `.wiki/` 所在 repo 執行：
-
-```powershell
-python -m business_graph_mcp migrate <repo>
-```
-
-遷移會把 `.wiki/pages/*.md` 複製到 `.bgraph/nodes/`、把每個可解析頁暫定為 `type: rule`，並在目標不存在時把 `wiki.toml` 複製為 `bgraph.toml`。既有 `[[X]]` 在新模型中等同 `relates_to`。
-
-這是保守的一次性複製：原 `.wiki/` 不會刪除，既有 `.bgraph` 檔案不會覆寫，解析或讀取失敗的頁會列為跳過，只有 `pages/` 第一層的 `*.md` 會處理，舊 `index.db` 不會搬移。所有遷移節點都暫定為 `rule`，必須逐頁改成正確型別並補上可用的關係與 `code`；若檔案系統不支援建立硬連結，命令會停止並保留已完成項目與原始 `.wiki/`。它也不會修改 MCP client 的舊 server 註冊或 `.gitignore`，請依 [SETUP.md](SETUP.md) 手動處理。
 
 ## 安裝與設定
 
