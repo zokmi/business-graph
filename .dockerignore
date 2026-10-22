@@ -1,0 +1,17 @@
+# 僅允許建置所需來源；其餘使用者資料、憑證與工作目錄皆不送至 daemon。
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!src/**
+**/__pycache__/
+**/*.pyc
+**/.git/
+**/.venv/
+**/.bgraph/
+**/.superpowers/
+**/.pytest-tmp/
+**/credentials*.toml

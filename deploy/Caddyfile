@@ -1,0 +1,4 @@
+{$BGRAPH_DOMAIN} {
+    # 保留原始 Host、Authorization 與 Origin，由應用再次驗證。
+    reverse_proxy app:8000
+}

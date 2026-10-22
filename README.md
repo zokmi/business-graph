@@ -1,6 +1,6 @@
 # business-graph-mcp
 
-`business-graph-mcp` 是獨立發行的 Python 套件與 stdio MCP server，供 Claude Code 等 LLM agent 在 Git 專案中查詢、連結並累積業務規則、實體、決策與術語。知識以 Markdown 存在專案的 `.bgraph/nodes/`，可隨專案版控；使用本套件不需要安裝其他 MCP server。
+`business-graph-mcp` 是獨立發行的 Python 套件，提供本機 stdio 與遠端 Streamable HTTP MCP，供 LLM agent 查詢、連結並累積業務規則、實體、決策與術語。知識以 Markdown 存在 `.bgraph/nodes/`，可隨專案版控；使用本套件不需要安裝其他 MCP server。
 
 專案的業務知識常散落在對話、人的記憶與程式碼註解中。`business-graph-mcp` 讓 agent 在處理業務問題前先查；查無或內容不足時，把本次釐清的答案寫回。節點之間有明確關係，因此查詢也能回答「這條規則依賴什麼」與「改動它會波及誰」。
 
@@ -20,6 +20,10 @@ Claude Code 會在啟動 server 時透過 `uvx` 取得套件並快取於本機�
 
 第一次 `business_write` 會在目前專案建立 `.bgraph/nodes/`；之後可用 `business_explore` 查詢，用 `business_lint` 檢查知識圖。每個工具都能傳入 `project_path` 指定專案位置。
 
+上述為本機模式。多人共用時，遠端服務固定綁定一份知識庫，工具不接受 `project_path`；使用個別 Bearer 憑證、read/write 權限與 HTTPS。[遠端部署、備份還原及客戶端設定](SETUP.md#9-遠端共用知識庫)含 Docker Compose／Caddy 範例。第一版限制單一實例與本機持久化磁碟，不提供 OAuth 互動登入、Obsidian 同步或 Git 自動提交。
+
+部署範例已做靜態檢查；目前 Windows 主機沒有 Docker，映像建置、Linux 鎖競爭、HTTPS 與容器重建／新卷還原尚未實測，部署前須依 SETUP 執行驗收。Codespaces 與其他免費選項見[主機評估](docs/hosting-options.md)。
+
 ## 三個工具
 
 | 工具 | 用途 |
@@ -29,6 +33,8 @@ Claude Code 會在啟動 server 時透過 `uvx` 取得套件並快取於本機�
 | `business_lint(project_path?)` | 稽核過期、未確認、懸空、孤兒、反覆未命中、共現未連結、未解析程式碼錨點、無 code 的 rule 與未提交變更，並給出修正指引。 |
 
 若 `business_write` 已保存 Markdown、但索引同步或驗證失敗，回應會包含 `indexed: false`、新的 `base_hash`、`dangling: null` 與警告。內容已寫入；下次工具呼叫會重試同步，請勿拿舊 `base_hash` 重送。
+
+遠端成功回應若含 `audit_warning`，代表業務操作已完成，但操作紀錄未能確認保存；保留新雜湊並聯絡管理者，不要直接重送。`/healthz` 只表示程序存活，不保證磁碟、索引或 audit 可寫。
 
 三個工具共用 server 指示詞：業務問題先查，查無或不足而本次已弄清楚時寫回，發現既有節點過時時主動更正。詳見 `src/business_graph_mcp/server.py` 的 `INSTRUCTIONS`。
 
@@ -159,6 +165,8 @@ explore_depth = 2
 ## 安裝與設定
 
 見 [SETUP.md](SETUP.md)。
+
+本專案與 Karpathy LLM Wiki 方法的重疊與限制，見[既有對照分析](docs/superpowers/specs/2026-10-22-remote-knowledge-design.md#karpathy-llm-wiki-對照)。該文件的內文範本仍是提案，未變更現行範本、四種節點型別或業務知識收錄政策。
 
 ## 開發
 

@@ -1,0 +1,72 @@
+services:
+  app:
+    build:
+      context: ..
+    image: business-graph-mcp:local
+    restart: unless-stopped
+    init: true
+    command:
+      - serve
+      - --workspace
+      - /data/.bgraph
+      - --credentials-file
+      - /run/secrets/credentials.toml
+      - --audit-file
+      - /data/audit.jsonl
+      - --public-url
+      - https://${BGRAPH_DOMAIN:?請設定有效的公開 DNS 名稱}/mcp
+      - --allowed-host
+      - ${BGRAPH_DOMAIN:?請設定有效的公開 DNS 名稱}
+      - --allowed-origin
+      - https://${BGRAPH_DOMAIN:?請設定有效的公開 DNS 名稱}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --init
+    environment:
+      BGRAPH_DOMAIN: ${BGRAPH_DOMAIN:?請設定有效的公開 DNS 名稱}
+    volumes:
+      - graph_data:/data
+      - type: bind
+        source: ${BGRAPH_CREDENTIALS_FILE:?請設定憑證檔絕對路徑}
+        target: /run/secrets/credentials.toml
+        read_only: true
+        bind:
+          create_host_path: false
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request; r = urllib.request.Request('http://127.0.0.1:8000/healthz', headers={'Host': os.environ['BGRAPH_DOMAIN']}); urllib.request.urlopen(r, timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      BGRAPH_DOMAIN: ${BGRAPH_DOMAIN:?請設定有效的公開 DNS 名稱}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+volumes:
+  graph_data:
+    name: ${BGRAPH_DATA_VOLUME:-business_graph_data}
+  caddy_data:
+  caddy_config:
