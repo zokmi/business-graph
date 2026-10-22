@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
+from business_graph_mcp.audit import audit_lock_path
 from business_graph_mcp.config import load_config
 from business_graph_mcp.errors import GraphError
 from business_graph_mcp.remote_auth import load_principals
@@ -144,6 +145,7 @@ class RemoteSettings:
         root = _absolute_path(self.workspace, "workspace")
         credentials = _absolute_path(self.credentials_file, "credentials_file")
         audit = _absolute_path(self.audit_file, "audit_file")
+        audit_lock = _absolute_path(audit_lock_path(audit), "audit 鎖")
         codegraph = (
             _absolute_path(self.codegraph_db, "codegraph_db")
             if self.codegraph_db is not None else None
@@ -156,17 +158,20 @@ class RemoteSettings:
             )
         }
         nodes = _absolute_path(root / "nodes", "nodes")
-        operational = [credentials, audit] + ([codegraph] if codegraph is not None else [])
+        operational = [credentials, audit, audit_lock] + (
+            [codegraph] if codegraph is not None else []
+        )
         if len(set(operational)) != len(operational) or any(
             path in protected or path.is_relative_to(nodes) for path in operational
         ):
             raise GraphError("憑證、操作紀錄與程式碼索引不得互相覆蓋或佔用知識庫檔案。")
         try:
-            if audit.exists() and not audit.is_file():
-                raise GraphError("audit_file 必須是檔案路徑。")
-            # 操作紀錄只可寫入獨立檔案，避免透過硬連結修改其他資料。
-            if audit.exists() and audit.stat().st_nlink > 1:
-                raise GraphError("audit_file 不可使用硬連結。")
+            for path in (audit, audit_lock):
+                if path.exists() and not path.is_file():
+                    raise GraphError("audit_file 與操作紀錄鎖必須是檔案路徑。")
+                # 操作紀錄與側檔只可使用獨立檔案，避免硬連結修改其他資料。
+                if path.exists() and path.stat().st_nlink > 1:
+                    raise GraphError("audit_file 與操作紀錄鎖不可使用硬連結。")
             if codegraph is not None and not codegraph.is_file():
                 raise GraphError("codegraph_db 必須是已存在的索引檔案。")
             for index, path in enumerate(operational):

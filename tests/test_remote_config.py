@@ -191,3 +191,19 @@ def test_hardlinked_audit_cannot_modify_credentials(settings_args, tmp_path):
     settings_args["audit_file"] = audit
     with pytest.raises(GraphError):
         RemoteSettings(**settings_args)
+
+
+@pytest.mark.parametrize("field", ["credentials_file", "codegraph_db"])
+def test_audit_lock_sidecar_cannot_modify_other_operational_files(settings_args, field):
+    lock = settings_args["audit_file"].with_name(settings_args["audit_file"].name + ".lock")
+    lock.write_bytes(settings_args["credentials_file"].read_bytes())
+    settings_args[field] = lock
+    with pytest.raises(GraphError):
+        RemoteSettings(**settings_args)
+
+
+def test_audit_lock_sidecar_hardlink_cannot_modify_credentials(settings_args):
+    lock = settings_args["audit_file"].with_name(settings_args["audit_file"].name + ".lock")
+    lock.hardlink_to(settings_args["credentials_file"])
+    with pytest.raises(GraphError):
+        RemoteSettings(**settings_args)

@@ -55,8 +55,14 @@ def _unlock(stream: BinaryIO) -> None:
 @contextmanager
 def workspace_lock(root: Path, timeout: float = 10.0) -> Iterator[None]:
     """取得 workspace 專屬的跨行程互斥鎖，逾時請呼叫端稍後重試。"""
-    root.mkdir(parents=True, exist_ok=True)
-    lock_path = root / _LOCK_NAME
+    with file_lock(root / _LOCK_NAME, timeout):
+        yield
+
+
+@contextmanager
+def file_lock(lock_path: Path, timeout: float = 10.0) -> Iterator[None]:
+    """以獨立側檔提供跨執行緒與跨行程同步，不修改受保護的資料檔。"""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+b") as stream:
         stream.seek(0, os.SEEK_END)
         if stream.tell() == 0:
@@ -66,7 +72,7 @@ def workspace_lock(root: Path, timeout: float = 10.0) -> Iterator[None]:
         while not _try_lock(stream):
             if time.monotonic() >= deadline:
                 raise GraphLockTimeoutError(
-                    f"知識庫 {root} 正被另一個作業使用；等待逾時，請稍後重試。"
+                    "資源正被另一個作業使用；等待逾時，請稍後重試。"
                 )
             time.sleep(min(_RETRY_INTERVAL, max(0.0, deadline - time.monotonic())))
         try:

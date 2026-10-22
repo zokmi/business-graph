@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import uvicorn
 from mcp.server import MCPServer
-from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.transport_security import TransportSecuritySettings
@@ -21,9 +20,11 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from business_graph_mcp.errors import GraphError
-from business_graph_mcp.remote_auth import FileTokenVerifier, Principal, require_tool_access
+from business_graph_mcp.audit import AuditWriter
+from business_graph_mcp.node import slugify
+from business_graph_mcp.remote_auth import FileTokenVerifier
 from business_graph_mcp.remote_config import RemoteSettings, validate_remote_workspace
+from business_graph_mcp.remote_operations import RemoteOperations
 from business_graph_mcp.server import INSTRUCTIONS, SERVER_NAME, SERVER_VERSION
 from business_graph_mcp.service import GraphService
 
@@ -99,8 +100,9 @@ class RequestBoundary:
 class ToolArgumentsBoundary:
     """SDK 預設忽略額外參數；在驗證前拒絕所有未宣告欄位。"""
 
-    def __init__(self) -> None:
+    def __init__(self, operations: RemoteOperations) -> None:
         self.parameters: dict[str, set[str]] = {}
+        self.operations = operations
 
     def register(self, function: Callable[..., Any]) -> None:
         """由實際工具簽章取得允許欄位，避免另行維護相同清單。"""
@@ -114,6 +116,7 @@ class ToolArgumentsBoundary:
             arguments = ctx.params.get("arguments", {})
             if isinstance(name, str) and name in self.parameters and isinstance(arguments, dict):
                 if set(arguments) - self.parameters[name]:
+                    await self.operations.record(name, "invalid_arguments")
                     return CallToolResult(
                         content=[TextContent(type="text", text="遠端工具不接受未宣告的參數。")],
                         is_error=True,
@@ -121,20 +124,11 @@ class ToolArgumentsBoundary:
         return await call_next(ctx)
 
 
-def _authorize(tool_name: str) -> Principal:
-    """在當次 SDK 請求 context 取得主體；進入執行緒前驗證工具權限。"""
-    token = get_access_token()
-    if token is None or "read" not in token.scopes:
-        raise GraphError("此請求缺少有效的讀取授權。")
-    principal = Principal(token.client_id, "write" if "write" in token.scopes else "read")
-    require_tool_access(principal, tool_name)
-    return principal
-
-
 def create_remote_app(settings: RemoteSettings) -> Starlette:
     """建立單一知識庫、逐次驗證且不保留 session 的 HTTP MCP。"""
     service = GraphService(validate_remote_workspace(settings.workspace), settings.codegraph_db)
-    arguments_boundary = ToolArgumentsBoundary()
+    operations = RemoteOperations(AuditWriter(settings.audit_file))
+    arguments_boundary = ToolArgumentsBoundary(operations)
     mcp = MCPServer(
         SERVER_NAME,
         version=SERVER_VERSION,
@@ -154,10 +148,9 @@ def create_remote_app(settings: RemoteSettings) -> Starlette:
     )
 
     @mcp.tool()
-    async def business_explore(query: str) -> dict[str, str]:
+    async def business_explore(query: str) -> CallToolResult:
         """查詢固定知識庫的業務知識；query 是搜尋詞或業務問題。"""
-        _authorize("business_explore")
-        return await asyncio.to_thread(service.explore, query)
+        return await operations.call("business_explore", partial(service.explore, query))
 
     @mcp.tool()
     async def business_write(
@@ -168,29 +161,25 @@ def create_remote_app(settings: RemoteSettings) -> Starlette:
         aliases: list[str] | None = None,
         code: list[str] | None = None,
         base_hash: str | None = None,
-    ) -> dict[str, object]:
+    ) -> CallToolResult:
         """寫入業務知識；type 為 rule/entity/decision/term，status 為 confirmed/inferred。
 
         內文使用 markdown，不含 front matter。更新既有頁必須提供 explore 的 base_hash，
         新頁省略；aliases 是別名，code 是程式碼符號名稱。須具寫入權限。
         """
-        _authorize("business_write")
-        return await asyncio.to_thread(
-            service.write,
-            title=title,
-            node_type=type,
-            content=content,
-            status=status,
-            aliases=tuple(aliases or ()),
-            code=tuple(code or ()),
-            base_hash=base_hash,
+        return await operations.call(
+            "business_write",
+            partial(
+                service.write, title=title, node_type=type, content=content, status=status,
+                aliases=tuple(aliases or ()), code=tuple(code or ()), base_hash=base_hash,
+            ),
+            slug=slugify(title), base_hash=base_hash,
         )
 
     @mcp.tool()
-    async def business_lint() -> dict[str, str]:
+    async def business_lint() -> CallToolResult:
         """稽核固定知識庫的一致性，唯讀主體也可使用。"""
-        _authorize("business_lint")
-        return await asyncio.to_thread(service.lint)
+        return await operations.call("business_lint", service.lint)
 
     for function in (business_explore, business_write, business_lint):
         arguments_boundary.register(function)
