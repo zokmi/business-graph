@@ -62,6 +62,13 @@ def open_session(project_path: str | None, *, create: bool = False) -> Iterator[
             )
         ws = found
 
+    with open_workspace_session(ws) as session:
+        yield session
+
+
+@contextmanager
+def open_workspace_session(ws: Workspace) -> Iterator[Session]:
+    """以明確指定的知識庫持鎖、同步並開啟連線，結束時釋放資源。"""
     with workspace_lock(ws.root):
         cfg = load_config(ws.config_path)
         conn = open_index(ws.db_path)

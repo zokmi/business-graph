@@ -87,11 +87,17 @@ def uncommitted_pages(ws: Workspace) -> tuple[str, ...] | None:
 
 
 def run_lint(session: Session, today: date) -> str:
+    """以本機索引搜尋規則執行稽核。"""
+    return lint_session(session, today, find_codegraph_db(session.ws.root))
+
+
+def lint_session(session: Session, today: date, codegraph_db: Path | None) -> str:
     """執行全部稽核項目並組成可執行的修正清單。
 
     參數:
         session: 已開啟的工具執行環境。
         today: 判定基準日。
+        codegraph_db: 明確指定的程式碼索引；None 時略過錨點解析。
     """
     conn = session.conn
     sections: list[str] = []
@@ -207,11 +213,10 @@ def run_lint(session: Session, today: date) -> str:
 
     # 索引必須能完成全部查詢，才能把缺少的結果判為查無符號。
     # 沒有安裝 codegraph 或索引損壞都不算知識庫缺陷。
-    db_path = find_codegraph_db(session.ws.root)
-    if db_path is not None:
+    if codegraph_db is not None:
         anchors = all_code_anchors(conn)
         resolved, complete = resolve_symbols_checked(
-            db_path, sorted({symbol for _, symbol in anchors})
+            codegraph_db, sorted({symbol for _, symbol in anchors})
         )
         hashes = all_content_hashes(conn)
         unresolved = [

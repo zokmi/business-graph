@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.types import ToolAnnotations
@@ -11,7 +12,7 @@ from pydantic import Field
 from business_graph_mcp.banners import build_notices
 from business_graph_mcp.codegraph import find_codegraph_db, resolve_symbols
 from business_graph_mcp.db.queries import dangling_targets, record_miss
-from business_graph_mcp.engine import open_session
+from business_graph_mcp.engine import Session, open_session
 from business_graph_mcp.errors import GraphNotFoundError
 from business_graph_mcp.explore import run_explore
 from business_graph_mcp.formatting import format_explore
@@ -37,6 +38,28 @@ def _normalize(query: str) -> str:
     過度正規化會讓「反覆查不到」這個訊號失真。
     """
     return " ".join(query.lower().split())
+
+
+def explore_session(session: Session, query: str, codegraph_db: Path | None) -> dict[str, str]:
+    """查詢已開啟的知識庫；程式碼索引僅使用明確提供的路徑。"""
+    result = run_explore(session.conn, query, session.cfg)
+
+    miss_count = 0
+    if not result.hits:
+        miss_count = record_miss(session.conn, _normalize(query), datetime.now())
+
+    dangling = dangling_targets(session.conn, [h.page.slug for h in result.hits])
+    notices = build_notices(
+        result,
+        session.cfg,
+        query=query,
+        miss_count=miss_count,
+        dangling=dangling,
+        today=date.today(),
+    )
+    symbols = sorted({s for anchors in result.anchors.values() for s in anchors})
+    anchor_locations = resolve_symbols(codegraph_db, symbols)
+    return {"result": format_explore(result, notices, session.sync, anchor_locations)}
 
 
 def register(mcp: Any) -> None:
@@ -74,28 +97,7 @@ def register(mcp: Any) -> None:
         def _run() -> dict[str, str]:
             try:
                 with open_session(project_path) as session:
-                    result = run_explore(session.conn, query, session.cfg)
-
-                    miss_count = 0
-                    if not result.hits:
-                        miss_count = record_miss(session.conn, _normalize(query), datetime.now())
-
-                    dangling = dangling_targets(
-                        session.conn, [h.page.slug for h in result.hits]
-                    )
-                    notices = build_notices(
-                        result,
-                        session.cfg,
-                        query=query,
-                        miss_count=miss_count,
-                        dangling=dangling,
-                        today=date.today(),
-                    )
-                    symbols = sorted({s for anchors in result.anchors.values() for s in anchors})
-                    anchor_locations = resolve_symbols(find_codegraph_db(session.ws.root), symbols)
-                    return {
-                        "result": format_explore(result, notices, session.sync, anchor_locations)
-                    }
+                    return explore_session(session, query, find_codegraph_db(session.ws.root))
             except GraphNotFoundError as exc:
                 # Spec 第九節原則 3：尚未建立知識圖是正常狀態，不是錯誤。
                 return {"result": str(exc)}

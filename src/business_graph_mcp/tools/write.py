@@ -7,7 +7,7 @@ from typing import Annotated, Any
 
 from pydantic import Field
 
-from business_graph_mcp.engine import open_session
+from business_graph_mcp.engine import Session, open_session
 from business_graph_mcp.writer import write_node
 
 _TITLE_DESCRIPTION = (
@@ -68,6 +68,41 @@ _PROJECT_PATH_DESCRIPTION = (
 )
 
 
+def write_session(
+    session: Session,
+    *,
+    title: str,
+    node_type: str,
+    content: str,
+    status: str,
+    aliases: tuple[str, ...] = (),
+    code: tuple[str, ...] = (),
+    base_hash: str | None = None,
+) -> dict[str, object]:
+    """寫入已開啟的知識庫，並組成與本機工具相同的回應。"""
+    outcome = write_node(
+        session,
+        title=title,
+        node_type=node_type,
+        content=content,
+        status=status,
+        aliases=aliases,
+        code=code,
+        base_hash=base_hash,
+        today=date.today(),
+    )
+    response: dict[str, object] = {
+        "slug": outcome.slug,
+        "created": outcome.created,
+        "base_hash": outcome.base_hash,
+        "dangling": list(outcome.dangling) if outcome.dangling is not None else None,
+        "indexed": outcome.indexed,
+    }
+    if outcome.warning is not None:
+        response["warning"] = outcome.warning
+    return response
+
+
 def register(mcp: Any) -> None:
     """在 MCP server 上註冊寫入工具。
 
@@ -113,7 +148,7 @@ def register(mcp: Any) -> None:
         """
         def _run() -> dict[str, object]:
             with open_session(project_path, create=True) as session:
-                outcome = write_node(
+                return write_session(
                     session,
                     title=title,
                     node_type=type,
@@ -122,17 +157,6 @@ def register(mcp: Any) -> None:
                     aliases=tuple(aliases or ()),
                     code=tuple(code or ()),
                     base_hash=base_hash,
-                    today=date.today(),
                 )
-                response: dict[str, object] = {
-                    "slug": outcome.slug,
-                    "created": outcome.created,
-                    "base_hash": outcome.base_hash,
-                    "dangling": list(outcome.dangling) if outcome.dangling is not None else None,
-                    "indexed": outcome.indexed,
-                }
-                if outcome.warning is not None:
-                    response["warning"] = outcome.warning
-                return response
 
         return await asyncio.to_thread(_run)
