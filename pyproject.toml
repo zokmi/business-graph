@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "mcp>=2.0,<3",
     "pyyaml>=6.0",
+    "uvicorn>=0.30",
 ]
 
 # 註：business_lint 的「未 commit 變更」檢查會呼叫系統 git 執行檔，那是作業系統層級
@@ -46,6 +47,7 @@ dev = [
     # schema.sql；這是測試套件本身的開發期相依，不該靠呼叫端每次記得加
     # --with build，否則標準的 `uv run pytest` 預設就是紅的。
     "build>=1.0",
+    "httpx2>=2.10",
 ]
 
 [tool.pytest.ini_options]

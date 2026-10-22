@@ -1,22 +1,69 @@
 """business-graph MCP server 的進入點。"""
+
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
 from pathlib import Path
 
 from business_graph_mcp.db.connection import ensure_fts5_available
-from business_graph_mcp.errors import GraphIndexError, GraphMigrationError
+from business_graph_mcp.errors import GraphError, GraphIndexError, GraphMigrationError
 from business_graph_mcp.migrate import migrate_workspace
+from business_graph_mcp.remote import run_remote
+from business_graph_mcp.remote_config import RemoteSettings, validate_remote_workspace
 from business_graph_mcp.server import create_server
 
 
+def _serve(arguments: list[str]) -> None:
+    """解析遠端服務的明確設定；初始化先於完整設定驗證。"""
+    parser = argparse.ArgumentParser(description="啟動固定知識庫的遠端 MCP 服務。")
+    parser.add_argument("--workspace", type=Path, required=True, help="知識庫的絕對路徑")
+    parser.add_argument("--credentials-file", type=Path, required=True, help="憑證摘要設定檔")
+    parser.add_argument("--audit-file", type=Path, required=True, help="操作紀錄檔案")
+    parser.add_argument("--public-url", required=True, help="明確的外部服務網址")
+    parser.add_argument("--host", default="127.0.0.1", help="監聽主機")
+    parser.add_argument("--port", type=int, default=8000, help="監聽連接埠")
+    parser.add_argument("--init", action="store_true", help="初始化空白知識庫")
+    parser.add_argument("--codegraph-db", type=Path, help="明確指定程式碼索引")
+    parser.add_argument("--allowed-host", action="append", default=[], help="允許的 Host，可重複")
+    parser.add_argument(
+        "--allowed-origin", action="append", default=[], help="允許的 Origin，可重複"
+    )
+    parser.add_argument("--max-request-bytes", type=int, default=1048576, help="請求本文上限")
+    args = parser.parse_args(arguments)
+    try:
+        if args.init:
+            validate_remote_workspace(args.workspace, initialize=True)
+        settings = RemoteSettings(
+            workspace=args.workspace,
+            credentials_file=args.credentials_file,
+            audit_file=args.audit_file,
+            public_url=args.public_url,
+            host=args.host,
+            port=args.port,
+            codegraph_db=args.codegraph_db,
+            allowed_hosts=tuple(args.allowed_host),
+            allowed_origins=tuple(args.allowed_origin),
+            max_request_bytes=args.max_request_bytes,
+        )
+        ensure_fts5_available()
+        run_remote(settings)
+    except GraphError as exc:
+        print(f"遠端服務啟動失敗：{exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def main() -> None:
-    """無參數時執行 server；migrate <repo> 執行一次性遷移。
+    """無參數執行 stdio；serve 啟動遠端服務；migrate 執行一次性遷移。
 
     所有訊息一律輸出到 stderr；stdout 是 MCP 協定通道，寫入會破壞協定。
     """
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(message)s")
+
+    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+        _serve(sys.argv[2:])
+        return
 
     if len(sys.argv) > 1 and sys.argv[1] == "migrate":
         if len(sys.argv) != 3:
