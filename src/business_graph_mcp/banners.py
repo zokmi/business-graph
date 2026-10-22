@@ -79,13 +79,13 @@ def build_notices(
 
     if not result.hits:
         todos.append(
-            f"知識圖中查無「{query}」的記錄。若本次工作已弄清楚答案，"
-            "用 business_write 建立新頁記下來。"
+            f"知識圖中查無「{query}」的記錄。若本次工作已釐清可重用的業務知識，"
+            "用 business_write 建立新頁；不收錄 issue 資訊、工作紀錄或純技術細節。"
         )
         if miss_count >= cfg.miss_threshold:
             todos.append(
                 f"「{query}」已是第 {miss_count} 次查無結果，屬高價值知識缺口，"
-                "優先補上。"
+                "僅在屬於可重用的業務知識時優先補上。"
             )
         return Notices(prefix=tuple(prefix), todos=tuple(todos))
 
@@ -93,7 +93,7 @@ def build_notices(
     if 低信心:
         prefix.append(
             "本次命中的信心不高，內容可能不是你要找的。"
-            "若答案不在其中，用 business_write 補上正確內容。"
+            "若答案不在其中，且屬於可重用的業務知識，用 business_write 補上正確內容。"
         )
 
     broken = [h.page for h in result.hits if h.page.parse_error is not None]
@@ -125,7 +125,8 @@ def build_notices(
         # Spec 第 4.3 節：後綴措辭須同時涵蓋「零命中」與「命中但不足」，
         # 不可只在 prefix 提醒信心不足卻不附對應的待辦動作。
         todos.append(
-            f"若本次命中的內容未回答「{query}」，用 business_write 補上正確內容。"
+            f"若本次命中的內容未回答「{query}」，且已釐清可重用的業務知識，"
+            "用 business_write 補上；不收錄 issue 資訊、工作紀錄或純技術細節。"
         )
 
     for page in inferred:

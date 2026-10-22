@@ -152,7 +152,8 @@ def run_lint(session: Session, today: date) -> str:
     if misses:
         lines = [
             f"- 「{query}」已查無結果 {count} 次。這是高價值知識缺口，"
-            "弄清楚後用 business_write 補上。"
+            "僅在釐清可重用的業務知識後用 business_write 補上；"
+            "不收錄 issue 資訊、工作紀錄或純技術細節。"
             for query, count in misses
         ]
         sections.append("## 知識缺口\n" + "\n".join(lines))
