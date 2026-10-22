@@ -116,4 +116,3 @@ def test_backup_refuses_existing_destination_without_overwriting(tmp_path):
     with pytest.raises(FileExistsError):
         _copy_snapshot(source, existing)
     assert _bytes(existing) == before
-

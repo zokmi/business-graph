@@ -25,6 +25,8 @@ Cloudflare Workers + D1 是可研究的另一種架構，不能將目前 Docker 
 
 可以執行本服務與轉發 HTTP 埠，但其定位是開發環境。預設閒置 30 分鐘停止，可設定的閒置門檻最長 240 分鐘；這不是每次啟動只能運作四小時。依賴使用者活動與終端輸出的行為，不代表具有持續運行保證，不應把假造活動當作服務設計。
 
+另有獨立的連續運行上限：即使持續使用，Codespace 最多運行 12 小時便會自動停止，需重新啟動。這與閒置門檻不同；資料會保存，但服務仍會中斷。參見[官方生命週期說明](https://docs.github.com/en/codespaces/about-codespaces/understanding-the-codespace-lifecycle#maximum-lifetime-of-a-codespace)。
+
 轉發網址形式為 `https://CODESPACENAME-PORT.app.github.dev`。私有埠的非瀏覽器呼叫需額外 GitHub 驗證，並不能用本應用的 Bearer 憑證取代。官方說明使用 `X-Github-Token`，其 codespace session token 重啟後會變更且不應分享。公開埠則省去這道 GitHub 門檻，但必須保留本服務逐次請求的獨立憑證驗證；組織政策可能禁止公開埠。沒有在本次評估公開任何埠。
 
 `/workspaces` 內資料可跨停止／啟動及 dev container 重建保留。此目錄的持久化仍依附該 Codespace；停止且未使用的 Codespace 預設 30 天後刪除，保留期限可受個人或組織設定影響。資料應另備份，不能把「存在 repo 工作目錄」當作已經 push 至 GitHub。
