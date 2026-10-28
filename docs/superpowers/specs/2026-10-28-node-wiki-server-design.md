@@ -1,8 +1,10 @@
-# Node.js Wiki Server：多知識庫、OAuth 與設備管理
+# BusinessWiki：業務知識庫與 WikiGate 存取管理
 
 日期：2026-10-28。狀態：獨立 builder check 已完成，未發現影響規劃的未決問題；待使用者審閱，本文件不代表已核准實作。
 
 ## 1. 意圖與已確認需求
+
+主產品名稱為 **BusinessWiki**，核心用途是累積、查詢與維護業務知識。**WikiGate** 為其子功能，負責遠端連線、OAuth 授權及設備管理。使用者決定以獨立新專案實作 BusinessWiki；目前 repository 保存需求與設計，不在此處直接改名既有 Python 套件。
 
 讓管理者在遠端主機以 CLI 安裝 Wiki server，登錄為常駐服務並開機自啟，再自行新增知識庫與設定權限。多人與 agent 共用知識，server 不呼叫 LLM。
 
