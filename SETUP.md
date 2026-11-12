@@ -2,6 +2,29 @@
 
 本機 stdio 模式由 MCP client 在需要時啟動；遠端 Streamable HTTP 模式為常駐服務，第 9 節說明部署與還原。
 
+### 在 Windows 共用一個常駐 MCP 行程
+
+使用含工作區路由功能的版本，在 PowerShell 啟動一個 Streamable HTTP 服務。以下路徑請換成實際位置。憑證檔使用第 9 節的格式，服務用同一份憑證與操作紀錄處理所有登記的工作區。
+
+```powershell
+business-graph-mcp.exe serve `
+  --host 127.0.0.1 --port 8000 --public-url http://127.0.0.1:8000 `
+  --local-project-root 'C:\repos' `
+  --credentials-file 'C:\mcp\credentials.toml' --audit-file 'C:\mcp\audit.jsonl'
+```
+
+讓各 MCP client 連到 `http://127.0.0.1:8000/mcp` 並帶上 Bearer token。Codex 使用同一個 `[mcp_servers.business-graph]` 區段，將原本的 `command` 換成 HTTP URL 設定，並以環境變數提供 token。
+
+```toml
+[mcp_servers.business-graph]
+url = "http://127.0.0.1:8000/mcp"
+bearer_token_env_var = "BUSINESS_GRAPH_MCP_TOKEN"
+```
+
+各 agent 傳入目前專案的絕對 `project_path`（Git 專案目錄或其中的既有檔案）。服務從該路徑找最近的 Git 根目錄，並使用該專案的 `.bgraph`。缺少 `.bgraph` 時，agent 先詢問使用者。取得同意後，具寫入權限的 agent 可呼叫 `business_init`，後續使用同一份 `.bgraph`。可重複指定 `--local-project-root` 以涵蓋多個存放 Git 專案的目錄。此模式使用 loopback，適用於信任該專案目錄與本機 MCP client 的情境。
+
+`--workspace` 可選用來設定省略 `project_path` 時使用的全域預設。若未設定，工具會要求提供 `project_path`，因為 HTTP 服務無法從連線得知 agent 的工作目錄。若使用者指定某專案要共用另一份知識庫，可用 `--project-workspace` 登記該 `.bgraph`，再用 `--project-binding` 保存專案到知識庫的對應。各知識庫各有自己的索引和鎖。`--codegraph-db` 套用到 `--workspace` 指定的知識庫。
+
 ## 1. Claude Code 一條指令安裝
 
 先確認已安裝 Claude Code 與 [uv](https://docs.astral.sh/uv/)（含 `uvx`），且 Git 可以連線到 GitHub。執行：

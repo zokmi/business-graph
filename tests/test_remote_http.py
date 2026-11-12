@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 import httpx2
 import pytest
@@ -78,7 +79,7 @@ async def test_independent_sdk_clients_fixed_workspace_read_write(settings):
                 "business_lint",
             }
             assert all(
-                "project_path" not in t.input_schema.get("properties", {}) for t in listing.tools
+                "project_path" not in t.input_schema.get("required", []) for t in listing.tools
             )
             outcome = await writer.call_tool("business_write", write_args())
             assert not outcome.is_error
@@ -87,6 +88,43 @@ async def test_independent_sdk_clients_fixed_workspace_read_write(settings):
             result = await reader.call_tool("business_explore", {"query": "refund"})
             assert "Refund Policy" in result.structured_content["result"]
             assert not (await reader.call_tool("business_lint", {})).is_error
+    assert (settings.workspace / "nodes" / "Refund Policy.md").is_file()
+
+
+async def test_independent_clients_route_registered_projects(settings, tmp_path):
+    project = tmp_path / "project"
+    workspace = project / ".bgraph"
+    (workspace / "nodes").mkdir(parents=True)
+    (project / ".git").mkdir()
+    source = project / "source.py"
+    source.touch()
+    unknown = tmp_path / "unregistered"
+    (unknown / ".bgraph" / "nodes").mkdir(parents=True)
+    shared_project = tmp_path / "shared-project"
+    (shared_project / ".git").mkdir(parents=True)
+    app = create_remote_app(replace(
+        settings, project_workspaces=(workspace,), project_bindings=((shared_project, workspace),)
+    ))
+    async with app.router.lifespan_context(app):
+        async with sdk(app, "test-writer") as (writer, _), sdk(app, "test-reader") as (reader, _):
+            result = await writer.call_tool("business_write", write_args(project_path=str(source)))
+            assert not result.is_error
+            result = await reader.call_tool(
+                "business_explore", {"query": "refund", "project_path": str(project)}
+            )
+            assert "Refund Policy" in result.structured_content["result"]
+            shared = await reader.call_tool(
+                "business_explore", {"query": "refund", "project_path": str(shared_project)}
+            )
+            assert "Refund Policy" in shared.structured_content["result"]
+            result = await reader.call_tool("business_lint", {"project_path": str(project)})
+            assert not result.is_error
+            result = await writer.call_tool("business_write", write_args(project_path=str(unknown)))
+            assert result.is_error
+            assert not list((settings.workspace / "nodes").iterdir())
+            assert not list((unknown / ".bgraph" / "nodes").iterdir())
+            assert not (await writer.call_tool("business_write", write_args())).is_error
+    assert (workspace / "nodes" / "Refund Policy.md").is_file()
     assert (settings.workspace / "nodes" / "Refund Policy.md").is_file()
 
 
@@ -110,6 +148,34 @@ async def test_reader_cannot_directly_call_write_and_paths_are_rejected(settings
                 assert result.is_error
             assert node_hash(settings) == before
             assert not (settings.workspace.parent / ".bgraph").exists()
+
+
+async def test_local_git_workspace_requires_explicit_initialization(settings, tmp_path):
+    project = tmp_path / "project"
+    (project / ".git").mkdir(parents=True)
+    nested = project / "nested"
+    (nested / ".git").mkdir(parents=True)
+    (nested / ".bgraph" / "nodes").mkdir(parents=True)
+    args = {"project_path": str(project)}
+    app = create_remote_app(replace(settings, workspace=None, local_project_roots=(tmp_path,)))
+    async with app.router.lifespan_context(app):
+        async with sdk(app, "test-writer") as (writer, _), sdk(app, "test-reader") as (reader, _):
+            missing = await writer.call_tool("business_explore", {"query": "refund", **args})
+            assert missing.is_error and "確認" in missing.content[0].text
+            assert (await writer.call_tool("business_write", write_args(**args))).is_error
+            assert (await reader.call_tool("business_init", args)).is_error
+            assert not (project / ".bgraph").exists()
+            assert not (await writer.call_tool("business_init", args)).is_error
+            assert not (await writer.call_tool("business_init", args)).is_error
+            assert not (await writer.call_tool("business_write", write_args(**args))).is_error
+            result = await reader.call_tool("business_explore", {"query": "refund", **args})
+            assert "Refund Policy" in result.structured_content["result"]
+            isolated = await reader.call_tool(
+                "business_explore", {"query": "refund", "project_path": str(nested)}
+            )
+            assert not isolated.is_error
+            assert "Refund Policy" not in isolated.structured_content["result"]
+            assert (await reader.call_tool("business_lint", {})).is_error
 
 
 async def test_each_request_rechecks_token_role_and_no_session_auth_bypass(settings):
@@ -194,7 +260,7 @@ async def test_oversized_body_rejected_before_engine(settings, chunked):
     assert not (settings.workspace / "index.db").exists()
 
 
-async def test_run_remote_cli_over_real_loopback_tcp(settings):
+async def test_run_remote_cli_over_real_loopback_tcp(settings, tmp_path):
     """真實程序、uvicorn 與 TCP 連線驗證 CLI 到 MCP 工具的完整路徑。"""
     import asyncio
     import socket
@@ -202,6 +268,12 @@ async def test_run_remote_cli_over_real_loopback_tcp(settings):
     import sys
     import time
 
+    project = tmp_path / "another-project"
+    workspace = project / ".bgraph"
+    (workspace / "nodes").mkdir(parents=True)
+    (project / ".git").mkdir()
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
     with socket.socket() as port_probe:
         port_probe.bind(("127.0.0.1", 0))
         port = port_probe.getsockname()[1]
@@ -214,6 +286,13 @@ async def test_run_remote_cli_over_real_loopback_tcp(settings):
             "serve",
             "--workspace",
             str(settings.workspace),
+            "--local-project-root",
+            str(tmp_path),
+            "--project-workspace",
+            str(workspace),
+            "--project-binding",
+            str(consumer),
+            str(workspace),
             "--credentials-file",
             str(settings.credentials_file),
             "--audit-file",
@@ -249,7 +328,9 @@ async def test_run_remote_cli_over_real_loopback_tcp(settings):
             async with streamable_http_client(f"{url}/mcp", http_client=client) as streams:
                 async with ClientSession(*streams) as session:
                     await session.initialize()
-                    assert len((await session.list_tools()).tools) == 3
+                    assert {tool.name for tool in (await session.list_tools()).tools} == {
+                        "business_explore", "business_write", "business_lint", "business_init",
+                    }
                     assert not (await session.call_tool("business_write", write_args())).is_error
         async with httpx2.AsyncClient(
             headers={"Authorization": "Bearer test-reader"}, trust_env=False
@@ -259,6 +340,16 @@ async def test_run_remote_cli_over_real_loopback_tcp(settings):
                     await session.initialize()
                     result = await session.call_tool("business_explore", {"query": "refund"})
                     assert "Refund Policy" in result.structured_content["result"]
+                    isolated = await session.call_tool(
+                        "business_explore", {"query": "refund", "project_path": str(consumer)}
+                    )
+                    assert not isolated.is_error
+                    assert "Refund Policy" not in isolated.structured_content["result"]
+                    automatic = await session.call_tool(
+                        "business_explore", {"query": "refund", "project_path": str(project)}
+                    )
+                    assert not automatic.is_error
+                    assert "Refund Policy" not in automatic.structured_content["result"]
     finally:
         process.terminate()
         try:

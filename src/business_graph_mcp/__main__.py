@@ -17,8 +17,20 @@ from business_graph_mcp.server import create_server
 
 def _serve(arguments: list[str]) -> None:
     """解析遠端服務的明確設定；初始化先於完整設定驗證。"""
-    parser = argparse.ArgumentParser(description="啟動固定知識庫的遠端 MCP 服務。")
-    parser.add_argument("--workspace", type=Path, required=True, help="知識庫的絕對路徑")
+    parser = argparse.ArgumentParser(description="啟動 Streamable HTTP MCP 服務。")
+    parser.add_argument("--workspace", type=Path, help="預設知識庫的絕對路徑")
+    parser.add_argument(
+        "--local-project-root", type=Path, action="append", default=[],
+        help="允許自動探索的本機專案根目錄，可重複",
+    )
+    parser.add_argument(
+        "--project-workspace", type=Path, action="append", default=[],
+        help="可用 project_path 選擇的 .bgraph 絕對路徑，可重複",
+    )
+    parser.add_argument(
+        "--project-binding", type=Path, nargs=2, action="append", default=[],
+        metavar=("PROJECT_ROOT", "WORKSPACE"), help="專案目錄及已登記知識庫的絕對路徑，可重複",
+    )
     parser.add_argument("--credentials-file", type=Path, required=True, help="憑證摘要設定檔")
     parser.add_argument("--audit-file", type=Path, required=True, help="操作紀錄檔案")
     parser.add_argument("--public-url", required=True, help="明確的外部服務網址")
@@ -34,9 +46,14 @@ def _serve(arguments: list[str]) -> None:
     args = parser.parse_args(arguments)
     try:
         if args.init:
+            if args.workspace is None:
+                raise GraphError("--init 必須搭配 --workspace。")
             validate_remote_workspace(args.workspace, initialize=True)
         settings = RemoteSettings(
             workspace=args.workspace,
+            local_project_roots=tuple(args.local_project_root),
+            project_workspaces=tuple(args.project_workspace),
+            project_bindings=tuple((project, target) for project, target in args.project_binding),
             credentials_file=args.credentials_file,
             audit_file=args.audit_file,
             public_url=args.public_url,

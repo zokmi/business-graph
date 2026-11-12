@@ -98,6 +98,6 @@ def require_tool_access(principal: Principal, tool_name: str) -> None:
     """在每次工具呼叫驗證權限；未知工具一律拒絕。"""
     if tool_name in ("business_explore", "business_lint"):
         return
-    if tool_name == "business_write" and principal.role == "write":
+    if tool_name in ("business_write", "business_init") and principal.role == "write":
         return
     raise GraphError("此主體沒有呼叫指定工具的權限。")

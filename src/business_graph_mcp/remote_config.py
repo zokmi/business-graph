@@ -11,7 +11,7 @@ from business_graph_mcp.audit import audit_lock_path
 from business_graph_mcp.config import load_config
 from business_graph_mcp.errors import GraphError
 from business_graph_mcp.remote_auth import load_principals
-from business_graph_mcp.workspace import Workspace
+from business_graph_mcp.workspace import GRAPH_DIR_NAME, Workspace
 
 
 def _absolute_path(path: Path, name: str) -> Path:
@@ -37,7 +37,7 @@ def validate_remote_workspace(path: Path, *, initialize: bool = False) -> Worksp
             if root.is_dir() and any(root.iterdir()) and not (root / "nodes").is_dir():
                 raise GraphError("非空且無法辨識的目錄不可初始化。")
             if not root.exists() or not any(root.iterdir()):
-                (root / "nodes").mkdir(parents=True)
+                (root / "nodes").mkdir(parents=True, exist_ok=True)
 
         workspace = Workspace(root)
         if not root.is_dir() or not workspace.nodes_dir.is_dir():
@@ -110,7 +110,7 @@ class RemoteSettings:
     空的 allowlist 從 public_url 衍生單一具體來源，不加入萬用字元。
     """
 
-    workspace: Path
+    workspace: Path | None
     credentials_file: Path
     audit_file: Path
     public_url: str
@@ -120,6 +120,9 @@ class RemoteSettings:
     allowed_origins: tuple[str, ...] = ()
     max_request_bytes: int = 1024 * 1024
     codegraph_db: Path | None = None
+    project_workspaces: tuple[Path, ...] = ()
+    project_bindings: tuple[tuple[Path, Path], ...] = ()
+    local_project_roots: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         public = _url(self.public_url, "public_url")
@@ -142,7 +145,33 @@ class RemoteSettings:
         for origin in allowed_origins:
             _url(origin, "allowed_origins", origin_only=True)
 
-        root = _absolute_path(self.workspace, "workspace")
+        local_roots = tuple(_absolute_path(path, "local_project_root")
+                            for path in self.local_project_roots)
+        if local_roots:
+            loopback_names = {"127.0.0.1", "localhost", "::1"}
+            if self.host not in loopback_names or public.hostname not in loopback_names:
+                raise GraphError("本機專案探索只能使用 loopback 位址。")
+            if any(not path.is_dir() for path in local_roots):
+                raise GraphError("local_project_root 必須是既有目錄。")
+        if self.workspace is None and (not local_roots or self.codegraph_db is not None):
+            raise GraphError("固定服務或使用 codegraph_db 時必須指定預設知識庫。")
+        root = _absolute_path(self.workspace, "workspace") if self.workspace is not None else None
+        projects = tuple(
+            _absolute_path(path, "project_workspace") for path in self.project_workspaces
+        )
+        if any(path.name != GRAPH_DIR_NAME for path in projects):
+            raise GraphError("project_workspace 必須直接指向專案的 .bgraph 目錄。")
+        roots = set(projects)
+        if root is not None:
+            roots.add(root)
+        bindings = tuple(
+            (_absolute_path(project, "project_root"), _absolute_path(target, "workspace"))
+            for project, target in self.project_bindings
+        )
+        if len(dict(bindings)) != len(bindings):
+            raise GraphError("同一個專案只能登記一份知識庫。")
+        if any(not project.is_dir() or target not in roots for project, target in bindings):
+            raise GraphError("專案對應必須指定既有專案目錄和已登記的知識庫。")
         credentials = _absolute_path(self.credentials_file, "credentials_file")
         audit = _absolute_path(self.audit_file, "audit_file")
         audit_lock = _absolute_path(audit_lock_path(audit), "audit 鎖")
@@ -150,19 +179,21 @@ class RemoteSettings:
             _absolute_path(self.codegraph_db, "codegraph_db")
             if self.codegraph_db is not None else None
         )
-        protected = {root} | {
-            _absolute_path(root / name, name)
+        protected = roots | {
+            _absolute_path(workspace / name, name)
+            for workspace in roots
             for name in (
                 "bgraph.toml", "index.db", "index.db-wal", "index.db-shm",
                 "index.db-journal", "workspace.lock",
             )
         }
-        nodes = _absolute_path(root / "nodes", "nodes")
+        nodes = [_absolute_path(workspace / "nodes", "nodes") for workspace in roots]
         operational = [credentials, audit, audit_lock] + (
             [codegraph] if codegraph is not None else []
         )
         if len(set(operational)) != len(operational) or any(
-            path in protected or path.is_relative_to(nodes) for path in operational
+            path in protected or any(path.is_relative_to(directory) for directory in nodes)
+            for path in operational
         ):
             raise GraphError("憑證、操作紀錄與程式碼索引不得互相覆蓋或佔用知識庫檔案。")
         try:
@@ -183,10 +214,14 @@ class RemoteSettings:
         except OSError:
             raise GraphError("無法檢查操作紀錄或程式碼索引路徑。") from None
         load_principals(credentials)
-        validate_remote_workspace(root)
+        for workspace in roots:
+            validate_remote_workspace(workspace)
         for name, value in (
             ("workspace", root), ("credentials_file", credentials), ("audit_file", audit),
             ("codegraph_db", codegraph), ("allowed_hosts", allowed_hosts),
             ("allowed_origins", allowed_origins),
+            ("project_workspaces", projects),
+            ("project_bindings", bindings),
+            ("local_project_roots", local_roots),
         ):
             object.__setattr__(self, name, value)
