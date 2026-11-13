@@ -4,22 +4,28 @@
 
 ### 在 Windows 共用一個常駐 MCP 行程
 
-使用含工作區路由功能的版本，在 PowerShell 啟動一個 Streamable HTTP 服務。以下路徑請換成實際位置。憑證檔使用第 9 節的格式，服務用同一份憑證與操作紀錄處理所有登記的工作區。
+使用 Node.js 22 以上與含工作區路由功能的版本。在此專案目錄執行以下 PowerShell 指令，並將路徑換成實際位置。憑證檔使用第 9 節的格式，`BUSINESS_GRAPH_MCP_TOKEN` 必須對應其中一筆憑證的 SHA256。
 
 ```powershell
-business-graph-mcp.exe serve `
-  --host 127.0.0.1 --port 8000 --public-url http://127.0.0.1:8000 `
+$launcher = (Resolve-Path .\scripts\start-local-mcp.mjs).Path
+$python = (Resolve-Path .\.venv\Scripts\pythonw.exe).Path
+node $launcher 18763 'C:\mcp' $python -m business_graph_mcp serve `
+  --host 127.0.0.1 --port 18763 --public-url http://127.0.0.1:18763 `
   --local-project-root 'C:\repos' `
   --credentials-file 'C:\mcp\credentials.toml' --audit-file 'C:\mcp\audit.jsonl'
 ```
 
-讓各 MCP client 連到 `http://127.0.0.1:8000/mcp` 並帶上 Bearer token。Codex 使用同一個 `[mcp_servers.business-graph]` 區段，將原本的 `command` 換成 HTTP URL 設定，並以環境變數提供 token。
+啟動器等服務通過 MCP 驗證後退出，Python 在背景繼續執行，紀錄寫到狀態目錄的 `server.log`。同時執行多次時，各啟動器會共用同一個連接埠上的服務。
+
+讓各 MCP client 連到 `http://127.0.0.1:18763/mcp` 並帶上 Bearer token。Codex 使用同一個 `[mcp_servers.business-graph]` 區段，將原本的 `command` 換成 HTTP URL 設定，並以環境變數提供 token。Windows 重開機後可先執行上方的啟動命令，再開啟 Codex。
 
 ```toml
 [mcp_servers.business-graph]
-url = "http://127.0.0.1:8000/mcp"
+url = "http://127.0.0.1:18763/mcp"
 bearer_token_env_var = "BUSINESS_GRAPH_MCP_TOKEN"
 ```
+
+Claude Code 可將使用者層級的 `business-graph` 設為 `type: http`，`url` 指向相同端點，並將 `headersHelper` 設為上方啟動命令，在腳本路徑後、連接埠前加上 `--headers`。Helper 會在 Claude Code 連線時啟動或重用服務，再將授權標頭交給 Claude Code。命令內使用絕對路徑，含空白的路徑需加雙引號。
 
 各 agent 傳入目前專案的絕對 `project_path`（Git 專案目錄或其中的既有檔案）。服務從該路徑找最近的 Git 根目錄，並使用該專案的 `.bgraph`。缺少 `.bgraph` 時，agent 先詢問使用者。取得同意後，具寫入權限的 agent 可呼叫 `business_init`，後續使用同一份 `.bgraph`。可重複指定 `--local-project-root` 以涵蓋多個存放 Git 專案的目錄。此模式使用 loopback，適用於信任該專案目錄與本機 MCP client 的情境。
 

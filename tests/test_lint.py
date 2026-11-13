@@ -144,16 +144,17 @@ async def test_已連結的頁不列為共現線索(graph):
 
 
 async def test_一切正常時明確回報無問題(tmp_path):
+    updated = date.today().isoformat()
     nodes = tmp_path / ".bgraph" / "nodes"
     nodes.mkdir(parents=True)
     (nodes / "A.md").write_text(
         "---\ntitle: A\ntype: rule\ncode: [A.Symbol]\n"
-        "status: confirmed\nupdated: 2026-08-14\n---\n\nSee [[B]].\n",
+        f"status: confirmed\nupdated: {updated}\n---\n\nSee [[B]].\n",
         encoding="utf-8",
     )
     (nodes / "B.md").write_text(
         "---\ntitle: B\ntype: rule\ncode: [B.Symbol]\n"
-        "status: confirmed\nupdated: 2026-08-14\n---\n\nSee [[A]].\n",
+        f"status: confirmed\nupdated: {updated}\n---\n\nSee [[A]].\n",
         encoding="utf-8",
     )
     mcp = create_server()
