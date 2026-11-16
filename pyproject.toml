@@ -1,6 +1,6 @@
 [project]
 name = "business-graph-mcp"
-version = "0.2.1"
+version = "0.2.2"
 description = "MCP server for a typed business-logic knowledge graph"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -96,6 +96,8 @@ packages = ["src/business_graph_mcp"]
 # schema.sql 隨套件安裝；以 importlib.resources 讀取，wheel 與 editable 安裝皆成立。
 "src/business_graph_mcp/db/schema.sql" = "business_graph_mcp/db/schema.sql"
 "scripts/start-local-mcp.mjs" = "business_graph_mcp/start-local-mcp.mjs"
+"scripts/run-local-mcp-service.mjs" = "business_graph_mcp/run-local-mcp-service.mjs"
+"deploy/BusinessGraphMcp.xml" = "business_graph_mcp/BusinessGraphMcp.xml"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/", "scripts/", "tests/", "README.md", "SETUP.md", "LICENSE", "pyproject.toml"]
+include = ["src/", "scripts/", "tests/", "deploy/BusinessGraphMcp.xml", "README.md", "SETUP.md", "LICENSE", "pyproject.toml"]

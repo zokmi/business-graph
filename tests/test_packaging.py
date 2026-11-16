@@ -36,6 +36,8 @@ def test_建出的_wheel_含有_schema_sql(tmp_path):
 
     assert "business_graph_mcp/db/schema.sql" in names
     assert "business_graph_mcp/py.typed" in names
+    assert "business_graph_mcp/run-local-mcp-service.mjs" in names
+    assert "business_graph_mcp/BusinessGraphMcp.xml" in names
 
 
 def test_進入點可被匯入():

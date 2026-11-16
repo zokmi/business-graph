@@ -17,7 +17,21 @@ node $launcher 18763 'C:\mcp' $python -m business_graph_mcp serve `
 
 啟動器等服務通過 MCP 驗證後退出，Python 在背景繼續執行，紀錄寫到狀態目錄的 `server.log`。同時執行多次時，各啟動器會共用同一個連接埠上的服務。
 
-讓各 MCP client 連到 `http://127.0.0.1:18763/mcp` 並帶上 Bearer token。Codex 使用同一個 `[mcp_servers.business-graph]` 區段，將原本的 `command` 換成 HTTP URL 設定，並以環境變數提供 token。Windows 重開機後可先執行上方的啟動命令，再開啟 Codex。
+需要開機自動啟動時，使用 Windows 服務管理員搭配 [WinSW 2.12.0](https://github.com/winsw/winsw/releases/tag/v2.12.0)。服務由 Node.js 常駐管理目前的 Python MCP 後端，啟動與日誌都在背景處理。
+
+1. 將對應系統架構的 WinSW 發行執行檔另存成 `BusinessGraphMcp.exe`，把 [服務設定範本](deploy/BusinessGraphMcp.xml) 複製到同一目錄。修改 XML 中的絕對路徑和工作區參數，並先建立工作目錄。
+2. 以管理員身分開啟 PowerShell，執行 `.\BusinessGraphMcp.exe install /p`，在提示中指定有權讀取憑證、執行 Node.js 和 Python、寫入知識庫與操作紀錄的非管理員服務帳號。Bearer token 留在 MCP client，服務讀取憑證檔中已存放的雜湊。
+3. 結束目前監聽設定連接埠的舊 MCP 後端，再執行 `Start-Service BusinessGraphMcp`。確認 `Get-Service BusinessGraphMcp` 顯示 `Running`，並從 MCP client 驗證工具可用。若曾設定登入排程，驗證完成後停用舊排程。
+
+Windows 開機後會自動啟動服務。MCP 後端退出後，Node.js 等 5 秒再啟動。若 Node.js 啟動後端時發生系統錯誤或 Node.js 異常退出，WinSW 會依 XML 設定安排復原。日誌保存在 XML 的 `logpath`。
+
+手動重啟時，在管理員 PowerShell 執行：
+
+```powershell
+Restart-Service -Name BusinessGraphMcp
+```
+
+讓各 MCP client 連到 `http://127.0.0.1:18763/mcp` 並帶上 Bearer token。Codex 使用同一個 `[mcp_servers.business-graph]` 區段，將原本的 `command` 換成 HTTP URL 設定，並以環境變數提供 token。
 
 ```toml
 [mcp_servers.business-graph]

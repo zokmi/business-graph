@@ -1,0 +1,16 @@
+<service>
+  <id>BusinessGraphMcp</id>
+  <name>Business Graph MCP</name>
+  <executable>C:\Program Files\nodejs\node.exe</executable>
+  <arguments>"C:\repos\business-graph\scripts\run-local-mcp-service.mjs" "C:\repos\business-graph\.venv\Scripts\python.exe" -m business_graph_mcp serve --host 127.0.0.1 --port 18763 --public-url http://127.0.0.1:18763 --local-project-root "C:\repos" --credentials-file "C:\mcp\credentials.toml" --audit-file "C:\mcp\audit.jsonl"</arguments>
+  <workingdirectory>C:\mcp</workingdirectory>
+  <logpath>C:\mcp</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <startmode>Automatic</startmode>
+  <stopparentprocessfirst>true</stopparentprocessfirst>
+  <onfailure action="restart" delay="10 sec"/>
+  <resetfailure>1 hour</resetfailure>
+</service>
