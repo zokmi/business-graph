@@ -180,6 +180,16 @@ uv run mypy
 uv build
 ```
 
+## Claude Code 的 MCP doctor
+
+在 Claude Code 中安裝 business-graph 插件：
+
+```text
+/plugin install business-graph --marketplace zokmi/business-graph
+```
+
+已依 [安裝與設定](SETUP.md) 設定 Windows 本機 HTTP MCP 與 `headersHelper` 後，Claude Code 可在連線故障時執行 doctor。服務停止時會自動啟動。若本機程序已有啟動器記錄，doctor 可核對身分與設定後重啟持續異常的程序。舊啟動器建立的程序須經新版啟動器啟動一次，才會取得程序身分紀錄。也可手動執行 `/business-graph:business-graph-doctor`。
+
 ## 授權
 
 MIT，見 [LICENSE](LICENSE)。

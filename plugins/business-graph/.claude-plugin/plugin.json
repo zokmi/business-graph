@@ -1,0 +1,7 @@
+{
+  "name": "business-graph",
+  "version": "0.2.3",
+  "author": { "name": "zokmi" },
+  "description": "Diagnose and recover the local business-graph MCP server.",
+  "repository": "https://github.com/zokmi/business-graph"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "business-graph-plugins",
+  "owner": { "name": "zokmi" },
+  "metadata": {
+    "description": "Claude Code plugins for business-graph MCP."
+  },
+  "plugins": [
+    {
+      "name": "business-graph",
+      "source": "./plugins/business-graph",
+      "description": "Diagnose and recover the local business-graph MCP server."
+    }
+  ]
+}
